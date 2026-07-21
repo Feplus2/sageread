@@ -1,6 +1,7 @@
 import { deleteThread, editThread, getAllThreads, getThreadById, getThreadsBybookId } from "@/services/thread-service";
 import { generateThreadTitleWithAI } from "@/services/thread-title-service";
 import { useThreadStore } from "@/store/thread-store";
+import type { ThreadSummary } from "@/types/thread";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { toast } from "sonner";
@@ -67,6 +68,28 @@ export const useThreads = ({ bookId }: UseThreadsProps = {}) => {
     [queryClient],
   );
 
+  // 切换星标：写反 starred 并刷新列表/当前对话
+  const handleToggleStar = useCallback(
+    async (thread: ThreadSummary) => {
+      try {
+        const updatedThread = await editThread(thread.id, { starred: !thread.starred });
+
+        // 若星标的是当前对话，同步更新 store
+        const { currentThread, setCurrentThread } = useThreadStore.getState();
+        if (currentThread?.id === thread.id) {
+          setCurrentThread(updatedThread);
+        }
+
+        // 刷新所有 threads 列表
+        queryClient.invalidateQueries({ queryKey: ["threads"] });
+      } catch (error) {
+        console.error("更新星标失败:", error);
+        toast.error("更新星标失败");
+      }
+    },
+    [queryClient],
+  );
+
   // AI 重命名 thread（基于当前全部对话内容，手动触发）
   const handleAiRenameThread = useCallback(
     async (threadId: string) => {
@@ -113,5 +136,6 @@ export const useThreads = ({ bookId }: UseThreadsProps = {}) => {
     handleDeleteThread,
     handleRenameThread,
     handleAiRenameThread,
+    handleToggleStar,
   };
 };

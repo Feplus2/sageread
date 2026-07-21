@@ -43,11 +43,30 @@ pub async fn initialize(app_handle: &AppHandle) -> Result<SqlitePool, Box<dyn st
         .await?;
     println!("Database schema initialized.");
 
+    run_migrations(&pool).await?;
+
     if is_new_db {
         initialize_default_skills(&pool).await?;
     }
 
     Ok(pool)
+}
+
+/// fork 专属迁移通道：上游同步 schema.sql 时的增量变更都放这里，避免改 schema.sql 冲突。
+/// 所有迁移必须幂等。
+async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    // threads.starred（对话星标）：已存在时忽略 duplicate column 错误
+    let result = sqlx::query("ALTER TABLE threads ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    match result {
+        Ok(_) => println!("Migration applied: threads.starred added."),
+        Err(e) if e.to_string().contains("duplicate column name") => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    Ok(())
 }
 
 async fn initialize_default_skills(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {

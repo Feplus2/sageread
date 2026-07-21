@@ -38,6 +38,7 @@ export interface EditThreadOptions {
   title?: string;
   metadata?: Record<string, any>;
   messages?: UIMessage[];
+  starred?: boolean;
 }
 
 export async function editThread(threadId: string, options: EditThreadOptions): Promise<Thread> {
@@ -47,6 +48,7 @@ export async function editThread(threadId: string, options: EditThreadOptions): 
       title: options.title,
       metadata: options.metadata ? JSON.stringify(options.metadata) : undefined,
       messages_json: options.messages ? JSON.stringify(options.messages) : undefined,
+      starred: options.starred,
     };
 
     const updatedThread: RawThread = await invoke("edit_thread", { payload });

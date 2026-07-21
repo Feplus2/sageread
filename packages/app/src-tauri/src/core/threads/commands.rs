@@ -39,6 +39,7 @@ pub async fn create_thread(
         metadata: payload.metadata,
         title: payload.title,
         messages: payload.messages_json,
+        starred: false,
         created_at: current_timestamp,
         updated_at: current_timestamp,
     };
@@ -56,7 +57,7 @@ pub async fn edit_thread(
     let pool = db_pool_guard.as_ref().ok_or("Database not initialized")?;
 
     let row = sqlx::query(
-        "SELECT id, book_id, metadata, title, messages, created_at, updated_at FROM threads WHERE id = ?"
+        "SELECT id, book_id, metadata, title, messages, starred, created_at, updated_at FROM threads WHERE id = ?"
     )
     .bind(&payload.id)
     .fetch_one(pool)
@@ -72,6 +73,7 @@ pub async fn edit_thread(
         metadata: row.get("metadata"),
         title: row.get("title"),
         messages: row.get("messages"),
+        starred: row.get::<i32, _>("starred") != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     };
@@ -79,13 +81,15 @@ pub async fn edit_thread(
     let new_title = payload.title.unwrap_or(existing_thread.title);
     let new_metadata = payload.metadata.unwrap_or(existing_thread.metadata);
     let new_messages = payload.messages_json.unwrap_or(existing_thread.messages);
+    let new_starred = payload.starred.unwrap_or(existing_thread.starred);
 
     sqlx::query(
-        "UPDATE threads SET title = ?, metadata = ?, messages = ?, updated_at = ? WHERE id = ?",
+        "UPDATE threads SET title = ?, metadata = ?, messages = ?, starred = ?, updated_at = ? WHERE id = ?",
     )
     .bind(&new_title)
     .bind(&new_metadata)
     .bind(&new_messages)
+    .bind(if new_starred { 1 } else { 0 })
     .bind(current_timestamp)
     .bind(&payload.id)
     .execute(pool)
@@ -101,6 +105,7 @@ pub async fn edit_thread(
         metadata: new_metadata,
         title: new_title,
         messages: new_messages,
+        starred: new_starred,
         created_at: existing_thread.created_at,
         updated_at: current_timestamp,
     };
@@ -117,7 +122,7 @@ pub async fn get_latest_thread_by_book_id(
     let pool = db_pool_guard.as_ref().ok_or("Database not initialized")?;
 
     let row_result = sqlx::query(
-        "SELECT id, book_id, metadata, title, messages, created_at, updated_at FROM threads WHERE book_id IS ? ORDER BY updated_at DESC LIMIT 1"
+        "SELECT id, book_id, metadata, title, messages, starred, created_at, updated_at FROM threads WHERE book_id IS ? ORDER BY updated_at DESC LIMIT 1"
     )
     .bind(&book_id)
     .fetch_optional(pool)
@@ -134,6 +139,7 @@ pub async fn get_latest_thread_by_book_id(
             metadata: row.get("metadata"),
             title: row.get("title"),
             messages: row.get("messages"),
+            starred: row.get::<i32, _>("starred") != 0,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         };
@@ -152,7 +158,7 @@ pub async fn get_threads_by_book_id(
     let pool = db_pool_guard.as_ref().ok_or("Database not initialized")?;
 
     let rows = sqlx::query(
-        "SELECT id, book_id, metadata, title, messages, created_at, updated_at FROM threads WHERE book_id IS ? ORDER BY updated_at DESC"
+        "SELECT id, book_id, metadata, title, messages, starred, created_at, updated_at FROM threads WHERE book_id IS ? ORDER BY updated_at DESC"
     )
     .bind(&book_id)
     .fetch_all(pool)
@@ -183,6 +189,7 @@ pub async fn get_threads_by_book_id(
                 metadata: row.get("metadata"),
                 title: row.get("title"),
                 message_count,
+                starred: row.get::<i32, _>("starred") != 0,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
             }
@@ -198,7 +205,7 @@ pub async fn get_all_threads(state: State<'_, AppState>) -> Result<Vec<ThreadSum
     let pool = db_pool_guard.as_ref().ok_or("Database not initialized")?;
 
     let rows = sqlx::query(
-        "SELECT id, book_id, metadata, title, messages, created_at, updated_at FROM threads ORDER BY updated_at DESC"
+        "SELECT id, book_id, metadata, title, messages, starred, created_at, updated_at FROM threads ORDER BY updated_at DESC"
     )
     .fetch_all(pool)
     .await
@@ -228,6 +235,7 @@ pub async fn get_all_threads(state: State<'_, AppState>) -> Result<Vec<ThreadSum
                 metadata: row.get("metadata"),
                 title: row.get("title"),
                 message_count,
+                starred: row.get::<i32, _>("starred") != 0,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
             }
@@ -246,7 +254,7 @@ pub async fn get_thread_by_id(
     let pool = db_pool_guard.as_ref().ok_or("Database not initialized")?;
 
     let row = sqlx::query(
-        "SELECT id, book_id, metadata, title, messages, created_at, updated_at FROM threads WHERE id = ?"
+        "SELECT id, book_id, metadata, title, messages, starred, created_at, updated_at FROM threads WHERE id = ?"
     )
     .bind(&thread_id)
     .fetch_one(pool)
@@ -262,6 +270,7 @@ pub async fn get_thread_by_id(
         metadata: row.get("metadata"),
         title: row.get("title"),
         messages: row.get("messages"),
+        starred: row.get::<i32, _>("starred") != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     };

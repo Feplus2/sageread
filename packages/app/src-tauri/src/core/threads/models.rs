@@ -7,6 +7,7 @@ pub struct Thread {
     pub metadata: String,
     pub title: String,
     pub messages: String,
+    pub starred: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -18,6 +19,7 @@ pub struct ThreadSummary {
     pub metadata: String,
     pub title: String,
     pub message_count: i32,
+    pub starred: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -36,4 +38,5 @@ pub struct EditThreadPayload {
     pub title: Option<String>,
     pub metadata: Option<String>,
     pub messages_json: Option<String>,
+    pub starred: Option<bool>,
 }

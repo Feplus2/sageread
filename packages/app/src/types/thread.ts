@@ -6,6 +6,7 @@ export interface Thread {
   title: string;
   metadata: string;
   messages: UIMessage[];
+  starred: boolean;
   created_at: number;
   updated_at: number;
 }
@@ -16,6 +17,7 @@ export interface RawThread {
   title: string;
   metadata: string;
   messages: string;
+  starred: boolean;
   created_at: number;
   updated_at: number;
 }
@@ -25,6 +27,7 @@ export interface ThreadSummary {
   book_id: string | null;
   title: string;
   message_count: number;
+  starred: boolean;
   created_at: number;
   updated_at: number;
 }

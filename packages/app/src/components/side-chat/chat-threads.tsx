@@ -11,8 +11,8 @@ import { Menu } from "@tauri-apps/api/menu";
 import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import dayjs from "dayjs";
-import { ArrowLeft, MessageCircle } from "lucide-react";
-import { useCallback, useState } from "react";
+import { ArrowLeft, MessageCircle, Star } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 interface ChatThreadsProps {
@@ -29,11 +29,18 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
     handleDeleteThread: deleteThreadFn,
     handleRenameThread: renameThreadFn,
     handleAiRenameThread: aiRenameThreadFn,
+    handleToggleStar: toggleStarFn,
   } = useThreads({ bookId });
 
   const [renameTarget, setRenameTarget] = useState<ThreadSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
+
+  // 星标对话排在前面，其余保持原顺序（sort 稳定）
+  const sortedThreads = useMemo(
+    () => [...threads].sort((a, b) => Number(b.starred ?? false) - Number(a.starred ?? false)),
+    [threads],
+  );
 
   const handleNativeDelete = useCallback(
     async (thread: ThreadSummary) => {
@@ -266,17 +273,33 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
           </div>
         ) : (
           <div className="space-y-2">
-            {threads.map((thread) => (
+            {sortedThreads.map((thread) => (
               <button
                 key={thread.id}
                 onClick={() => onSelectThread(thread)}
                 onContextMenu={handleMenuClick(thread)}
-                className="w-full cursor-pointer rounded-lg border p-2 text-left"
+                className="group w-full cursor-pointer rounded-lg border p-2 text-left"
               >
                 <div className="mb-1 flex items-start justify-between gap-2">
                   <h3 className="line-clamp-1 flex-1 font-medium text-neutral-900 text-sm dark:text-neutral-100">
                     {thread.title || "未命名对话"}
                   </h3>
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    title={thread.starred ? "取消星标" : "星标"}
+                    className={`flex-shrink-0 cursor-pointer opacity-40 transition-opacity hover:opacity-100 group-hover:opacity-70 ${
+                      thread.starred ? "opacity-100" : ""
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void toggleStarFn(thread);
+                    }}
+                  >
+                    <Star
+                      className={`size-3.5 ${thread.starred ? "fill-amber-400 text-amber-400" : "text-neutral-400"}`}
+                    />
+                  </span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-neutral-600 text-xs dark:text-neutral-400">{thread.message_count} 条消息</span>
