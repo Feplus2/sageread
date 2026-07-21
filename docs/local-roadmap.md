@@ -30,6 +30,9 @@
 | 对话重命名 | 后端零改动（`edit_thread` 已支持只改 title）；前端 `chat-threads.tsx` 右键菜单加项 + 弹窗 | 小 |
 | AI 自动命名 | 仿 `ai-context-service.ts` 的轻量调用，首轮对话结束后异步生成标题回写；prompt 可借鉴 CherryStudio | 小 |
 | 导出 Markdown | 纯前端遍历 `UIMessage[]` 拼 MD（quote 渲染为 blockquote + 书名），`plugin-dialog` 保存 + `plugin-fs` 落盘 | 小 |
+| 辅助模型设置 | 设置→模型提供商页顶部"辅助模型"卡片；`getUtilityModel()`（`ai/providers/factory.ts`，预留 `task` 参数）统一解析，回落聊天模型；标题/语义上下文/AI标签三处已切换 | 小 ✅ |
+
+> 修复备忘（2026-07-21）：① 标题生成 `maxOutputTokens` 30→500（deepseek-v4-pro 等推理模型的 reasoning 会吃光小预算导致输出为空）；② `use-chat-state.ts` 的 `onFinish`/`generateSemanticContextAsync` 误读全局 `useThreadStore`，而侧边栏对话存 `useReaderStore`，导致回答被存进新建对话（对话分裂）——已改为 `currentThreadRef`。**②是上游 main 的既有 bug，是首个上游 PR 的好素材。**
 
 ### P1 —— 导出增强 + 主题系统
 
@@ -42,6 +45,7 @@
 
 - **路线 A（先做）**：独立 MCP server（Node 或 Python），只读打开 SageRead SQLite，暴露 tools：`list_books` / `get_progress` / `get_reading_stats` / `list_highlights` / `get_thread` / `export_thread_markdown` 等。任何 AI Agent 配上即可跨应用访问阅读数据；联动 ima 侧 MCP（ima 已打通）实现"把对话搬进 ima 知识库"等灵活操作
 - **路线 B（成熟后提 PR）**：Tauri 后端内嵌 MCP over HTTP（`rmcp` crate），实时数据、免 DB 锁顾虑，作为给上游的重磅功能 PR
+- **候选：APP 帮助助手**——把 `docs/` 等文档喂给内置问答，回答"这个 App 怎么用"（书籍 RAG 基础设施可复用：embedding + sqlite-vec；模型走辅助模型）
 
 ### P3 —— 数据同步（WebDAV / 坚果云）
 
