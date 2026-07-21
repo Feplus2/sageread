@@ -93,6 +93,12 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
   const messagesRef = useRef<UIMessage[]>([]);
   const reasoningTimesRef = useRef<{ [messageId: string]: ReasoningTimes }>({});
 
+  // 异步回调（onFinish 等）里要读最新的 currentThread，且来源必须与调用方一致（options 优先）
+  const currentThreadRef = useRef(currentThread);
+  useEffect(() => {
+    currentThreadRef.current = currentThread;
+  }, [currentThread]);
+
   const handleReasoningTimesUpdate = (messageId: string, reasoningTimes: ReasoningTimes) => {
     reasoningTimesRef.current[messageId] = reasoningTimes;
   };
@@ -109,7 +115,7 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
         console.error("Error:", error);
       },
       onFinish: ({ message, messages: finishedMessages, isError }) => {
-        const { currentThread } = useThreadStore.getState();
+        const currentThread = currentThreadRef.current;
         const { selectedModel } = useProviderStore.getState();
         const resolvedMessages = finishedMessages ?? messagesRef.current;
 
@@ -358,8 +364,7 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
   const generateSemanticContextAsync = useCallback(
     async (userQuestion: string) => {
       try {
-        const { currentThread } = useThreadStore.getState();
-        const thread = currentThread;
+        const thread = currentThreadRef.current;
         if (!thread) {
           console.log("No current thread, skipping context generation");
           return;
