@@ -60,16 +60,16 @@
 ```
 upstream/main (只读同步上游)
 main (本地，= upstream/main，不放自己的改动)
-feat/xxx  (每个功能一个分支，从 main 开出，PR 就用它)
-local     (个人整合分支：合并所有 feat + 本地改动，自己日常用)
+local     (当前分支：本地改动 + 所有功能提交，日常用)
+feat/xxx  (PR 时才创建：从 main 开出，cherry-pick local 上的对应提交)
 ```
 
-1. **一个功能一个分支一个 PR**：重命名是一个 PR，自动命名是一个 PR，导出是一个 PR。每个 PR  diff 小、聚焦，上游好审好合
-2. **日常自己用的是 `local` 整合分支**：把所有 feat 分支和两处本地改动合进去，不影响各 feat 分支保持干净
+1. **提交按功能拆分，分支到 PR 时再建**：日常开发都在 `local` 上，提交（commit）按功能粒度记录；要提 PR 时，从 main 开 `feat/xxx` 分支，`git cherry-pick` 挑出该功能的提交，推到自己的 fork 发 PR。每个 PR diff 小、聚焦，上游好审好合
+2. **日常自己用的是 `local` 分支**：包含所有功能提交和本地改动，开发版就在这里跑
 3. **大功能拆小**：主题系统这种大块头，拆成"自定义 CSS 注入 → data-region 钩子 + THEMING.md → 主题包加载"几个独立 PR 依次提（后面的 PR 依赖前面的就 stacked 排列，等前面的合了再 rebase）
-4. **定期同步上游**：`git fetch upstream && git rebase upstream/main`（feat 分支）/ merge（local 分支），冲突尽早暴露
+4. **定期同步上游**：`git fetch upstream`，local 用 merge 或 rebase 跟上，冲突尽早暴露
 5. **上游不收的**：留在 local 分支自用即可，没有损失
-6. 提 PR 前检查：不带入"本地改动清单"里的任何一行
+6. 提 PR 前检查：不带入"本地改动清单"里的任何一行（chore/docs 提交永远留在 local）
 
 ## 开发环境速查
 
