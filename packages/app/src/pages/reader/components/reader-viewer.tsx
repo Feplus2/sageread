@@ -3,8 +3,10 @@ import { useSafeAreaInsets } from "@/hooks/use-safe-areaInsets";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useLayoutStore } from "@/store/layout-store";
 import { useLibraryStore } from "@/store/library-store";
+import { useThemeStore } from "@/store/theme-store";
 import { getInsetEdges } from "@/utils/grid";
 import { getViewInsets } from "@/utils/insets";
+import { getReaderBackgroundLayers } from "@/utils/style";
 import { useEffect, useMemo } from "react";
 import useBookShortcuts from "../hooks/use-book-shortcuts";
 import { useFoliateViewer } from "../hooks/use-foliate-viewer";
@@ -18,6 +20,10 @@ const ReaderViewerContent: React.FC = () => {
   const bookData = useReaderStore((state) => state.bookData);
   const config = useReaderStore((state) => state.config);
   const { settings } = useAppSettingsStore();
+  const { themeCode } = useThemeStore();
+
+  // 应用侧阅读背景：场景图+遮罩渲染在 foliate-view 外层容器上（书籍文档已透明化）
+  const backgroundLayers = getReaderBackgroundLayers(themeCode);
 
   const screenInsets = useSafeAreaInsets();
   const aspectRatio = window.innerWidth / window.innerHeight;
@@ -53,7 +59,22 @@ const ReaderViewerContent: React.FC = () => {
   const foliateViewer = useFoliateViewer(bookId, bookData.bookDoc, config, contentInsets);
 
   return (
-    <div ref={foliateViewer.containerRef} className="flex-1" data-book-id={bookId} {...foliateViewer.mouseHandlers} />
+    <div
+      ref={foliateViewer.containerRef}
+      className="flex-1"
+      data-book-id={bookId}
+      {...foliateViewer.mouseHandlers}
+      style={
+        backgroundLayers
+          ? {
+              backgroundImage: backgroundLayers,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              backgroundRepeat: "no-repeat",
+            }
+          : undefined
+      }
+    />
   );
 };
 

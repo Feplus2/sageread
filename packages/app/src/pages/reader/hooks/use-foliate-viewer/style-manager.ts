@@ -103,15 +103,15 @@ export class StyleManager {
 
     // Debounce style updates to prevent excessive reflows
     const now = Date.now();
-    if (now - this.lastUpdateTime < 50) {
-      // 50ms debounce
+    if (now - this.lastUpdateTime < 200) {
+      // 200ms debounce
       if (this.updateDebounceTimer) {
         clearTimeout(this.updateDebounceTimer);
       }
       this.updateDebounceTimer = setTimeout(() => {
         this.doApplyStyles();
         this.lastUpdateTime = now;
-      }, 50);
+      }, 200);
       return;
     }
 

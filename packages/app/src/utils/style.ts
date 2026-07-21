@@ -1,5 +1,7 @@
+import { type ReaderBackground, getReaderScene } from "@/styles/reader-scenes";
 import { type CustomTheme, type Palette, generateDarkPalette, generateLightPalette, themes } from "@/styles/themes";
 import type { ViewSettings } from "@/types/book";
+import tinycolor from "tinycolor2";
 import { getOSPlatform } from "./misc";
 
 const getFontStyles = (
@@ -63,13 +65,19 @@ const getFontStyles = (
 };
 
 const getColorStyles = (overrideColor: boolean, invertImgColorInDark: boolean, themeCode: ThemeCode) => {
-  const { bg, fg, primary, isDarkMode } = themeCode;
+  const { bg, fg, primary, isDarkMode, texture, backgroundImage } = themeCode;
+
+  // 场景/自定义背景图放在应用侧容器（React 层，见 reader-viewer.tsx），
+  // 书籍文档这里只做透明化，让应用侧背景透出来；文字色照常注入书籍侧。
+  const hasSceneBackground = !!backgroundImage;
+
   const colorStyles = `
     html {
       --theme-bg-color: ${bg};
       --theme-fg-color: ${fg};
       --theme-primary-color: ${primary};
-      color-scheme: ${isDarkMode ? "dark" : "light"};
+      /* 场景/自定义背景下不能用 dark color-scheme：WebView2 会把 iframe 画布默认刷成深色（纯黑纸张盖住应用侧背景） */
+      color-scheme: ${isDarkMode && !hasSceneBackground ? "dark" : "light"};
     }
     html, body {
       color: ${fg};
@@ -78,22 +86,26 @@ const getColorStyles = (overrideColor: boolean, invertImgColorInDark: boolean, t
       --background-set: var(--theme-bg-color);
     }
     html {
-      background-color: var(--theme-bg-color, transparent);
-      background: var(--background-set, none);
+      background-color: ${hasSceneBackground ? "transparent" : "var(--theme-bg-color, transparent)"};
+      background: ${hasSceneBackground ? "none" : "var(--background-set, none)"};
     }
+    /* 主题自带的背景纹理（如羊皮纸噪点）；场景/自定义背景由应用侧接管，书籍侧不再叠加 */
+    ${texture && !hasSceneBackground ? `html, body { background-image: ${texture}; }` : ""}
     div, p, h1, h2, h3, h4, h5, h6 {
-      ${overrideColor ? `background-color: ${bg} !important;` : ""}
+      ${overrideColor ? `background-color: ${hasSceneBackground ? "transparent" : bg} !important;` : ""}
+      ${overrideColor && texture && !hasSceneBackground ? `background-image: ${texture} !important;` : ""}
       ${overrideColor ? `color: ${fg} !important;` : ""}
     }
     pre, span { /* inline code blocks */
-      ${overrideColor ? `background-color: ${bg} !important;` : ""}
+      ${overrideColor ? `background-color: ${hasSceneBackground ? "transparent" : bg} !important;` : ""}
+      ${overrideColor && texture && !hasSceneBackground ? `background-image: ${texture} !important;` : ""}
     }
     a:any-link {
       ${overrideColor ? `color: ${primary};` : isDarkMode ? "color: lightblue;" : ""}
       text-decoration: none;
     }
     body.pbg {
-      ${isDarkMode ? `background-color: ${bg} !important;` : ""}
+      ${isDarkMode && !hasSceneBackground ? `background-color: ${bg} !important;` : ""}
     }
     img {
       ${isDarkMode && invertImgColorInDark ? "filter: invert(100%);" : ""}
@@ -120,7 +132,7 @@ const getColorStyles = (overrideColor: boolean, invertImgColorInDark: boolean, t
     /* for the Feedbooks eBooks */
     .chapterHeader, .chapterHeader * {
       border-color: unset;
-      background-color: ${bg} !important;
+      background-color: ${hasSceneBackground ? "transparent" : bg} !important;
     }
   `;
   return colorStyles;
@@ -343,6 +355,9 @@ export interface ThemeCode {
   primary: string;
   palette: Palette;
   isDarkMode: boolean;
+  texture?: string;
+  /** 阅读区背景图（场景/自定义图片）：CSS 背景图值 + 遮罩浓度，纯色时为 undefined */
+  backgroundImage?: { image: string; scrim: number };
 }
 
 export const getThemeCode = () => {
@@ -373,13 +388,63 @@ export const getThemeCode = () => {
   }
   if (!currentTheme) currentTheme = themes[0];
   const defaultPalette = isDarkMode ? currentTheme!.colors.dark : currentTheme!.colors.light;
+
+  // 阅读区背景配置：纯色沿用 palette；场景/自定义图片叠背景图 + 遮罩，文字色可被自定义覆盖
+  let fg = defaultPalette["base-content"];
+  let backgroundImage: ThemeCode["backgroundImage"];
+
+  let readerBg: ReaderBackground | null = null;
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem("readerBackground") : null;
+    readerBg = raw ? JSON.parse(raw) : null;
+  } catch {
+    readerBg = null;
+  }
+
+  if (readerBg) {
+    const scene = readerBg.kind === "scene" ? getReaderScene(readerBg.sceneId) : undefined;
+
+    // 手动值按模式取用：darkXxx 缺省时回落到浅色手动值（对所有 kind 生效）
+    const manualFg = isDarkMode ? (readerBg.darkFg ?? readerBg.fg) : readerBg.fg;
+    const manualScrim = isDarkMode ? (readerBg.darkScrim ?? readerBg.scrim) : readerBg.scrim;
+
+    if (manualFg) {
+      fg = manualFg;
+    } else if (scene) {
+      // 场景推荐文字色：按明暗模式各有一套（深色场景 dark 给浅字等）
+      fg = isDarkMode ? scene.dark.fg : scene.light.fg;
+    }
+
+    if (scene) {
+      backgroundImage = {
+        image: `url("${scene.uri}")`,
+        scrim: manualScrim ?? (isDarkMode ? scene.dark.scrim : scene.light.scrim),
+      };
+    } else if (readerBg.kind === "custom" && readerBg.fileUrl) {
+      backgroundImage = { image: `url("${readerBg.fileUrl}")`, scrim: manualScrim ?? 0.55 };
+    }
+  }
+
   return {
     bg: defaultPalette["base-100"],
-    fg: defaultPalette["base-content"],
+    fg,
     primary: defaultPalette.primary,
     palette: defaultPalette,
     isDarkMode,
+    texture: currentTheme!.texture,
+    backgroundImage,
   } as ThemeCode;
+};
+
+/**
+ * 构造应用侧阅读背景的两层 background-image 值（上层 bg 色遮罩 + 下层场景图）
+ * 用于 foliate-view 外层容器（React 侧），纯色模式返回 null
+ */
+export const getReaderBackgroundLayers = (themeCode: ThemeCode): string | null => {
+  const { bg, backgroundImage } = themeCode;
+  if (!backgroundImage) return null;
+  const scrimColor = tinycolor(bg).setAlpha(backgroundImage.scrim).toRgbString();
+  return `linear-gradient(${scrimColor}, ${scrimColor}), ${backgroundImage.image}`;
 };
 
 const getScrollbarStyles = (themeCode: ThemeCode) => {

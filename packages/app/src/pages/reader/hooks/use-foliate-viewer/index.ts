@@ -89,6 +89,9 @@ export const useFoliateViewer = (bookId: string, bookDoc: BookDoc, config: BookC
     };
   }, []);
 
+  // 书籍样式只在"书籍侧相关"字段变化时重注入：
+  // 遮罩浓度/场景图片切换只影响应用侧容器背景（reader-viewer.tsx），不触发这里
+  const bookBgMode = themeCode.backgroundImage ? "image" : "solid";
   // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
   useEffect(() => {
     const view = managerRef.current?.getView();
@@ -101,7 +104,15 @@ export const useFoliateViewer = (bookId: string, bookDoc: BookDoc, config: BookC
         docs.forEach(({ doc }) => applyFixedlayoutStyles(doc, settings.globalViewSettings, themeCode));
       }
     }
-  }, [themeCode, isDarkMode, settings.globalViewSettings, bookDoc.rendition?.layout]);
+  }, [
+    themeCode.fg,
+    themeCode.palette,
+    themeCode.texture,
+    bookBgMode,
+    isDarkMode,
+    settings.globalViewSettings,
+    bookDoc.rendition?.layout,
+  ]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
   useEffect(() => {

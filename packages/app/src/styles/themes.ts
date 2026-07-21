@@ -30,6 +30,8 @@ export type Theme = {
     dark: Palette;
   };
   isCustomizale?: boolean;
+  /** 可选的书籍内容背景纹理（CSS background-image 值），目前仅羊皮纸主题使用 */
+  texture?: string;
 };
 
 export type CustomTheme = {
@@ -69,6 +71,9 @@ export const generateDarkPalette = ({ bg, fg, primary }: BaseColor) => {
   } as Palette;
 };
 
+// 羊皮纸主题的纸张噪点纹理：内联 SVG fractalNoise，黑色噪点不透明度 5%，无外部资源
+const parchmentTexture = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`;
+
 export const themes = [
   {
     name: "default",
@@ -93,6 +98,15 @@ export const themes = [
       light: generateLightPalette({ fg: "#5b4636", bg: "#f1e8d0", primary: "#008b8b" }),
       dark: generateDarkPalette({ fg: "#ffd595", bg: "#342e25", primary: "#48d1cc" }),
     },
+  },
+  {
+    name: "parchment",
+    label: _("羊皮纸"),
+    colors: {
+      light: generateLightPalette({ fg: "#4f3f2c", bg: "#f4e7c8", primary: "#a05a2c" }),
+      dark: generateDarkPalette({ fg: "#e0d2ae", bg: "#2b251c", primary: "#d29a6a" }),
+    },
+    texture: parchmentTexture,
   },
   {
     name: "grass",
