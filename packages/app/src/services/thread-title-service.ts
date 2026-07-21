@@ -58,7 +58,7 @@ export async function generateThreadTitleWithAI(
     const { text } = await generateText({
       model: modelInstance,
       prompt: buildTitlePrompt(userText, assistantText, latestUserText, latestAssistantText),
-      maxOutputTokens: 30,
+      maxOutputTokens: 500,
       temperature: 0.3,
     });
 
