@@ -1,5 +1,4 @@
-import { createModelInstance } from "@/ai/providers/factory";
-import { useProviderStore } from "@/store/provider-store";
+import { createModelInstance, getUtilityModel } from "@/ai/providers/factory";
 import { type UIMessage, generateText } from "ai";
 
 // 防御性长度上限，prompt 中要求的是 10 字以内
@@ -45,11 +44,12 @@ export async function generateThreadTitleWithAI(
 
     let modelConfig = selectedModel;
     if (!modelConfig) {
-      const { selectedModel: storeModel } = useProviderStore.getState();
-      if (!storeModel) return null;
+      // 显式传参优先，否则用辅助模型（未配置时回落当前聊天模型）
+      const utilityModel = getUtilityModel();
+      if (!utilityModel) return null;
       modelConfig = {
-        providerId: storeModel.providerId,
-        modelId: storeModel.modelId,
+        providerId: utilityModel.providerId,
+        modelId: utilityModel.modelId,
       };
     }
 

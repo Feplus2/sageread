@@ -14,11 +14,13 @@ export interface SelectedModel {
 interface ProviderState {
   modelProviders: ModelProvider[];
   selectedModel: SelectedModel | null;
+  utilityModel: SelectedModel | null;
   setModelProviders: (modelProviders: ModelProvider[]) => void;
   updateProvider: (providerId: string, updates: Partial<ModelProvider>) => void;
   addProvider: () => string;
   removeProvider: (providerId: string) => void;
   setSelectedModel: (model: SelectedModel | null) => void;
+  setUtilityModel: (model: SelectedModel | null) => void;
 }
 
 export const useProviderStore = create<ProviderState>()(
@@ -26,6 +28,7 @@ export const useProviderStore = create<ProviderState>()(
     (set, get) => ({
       modelProviders: predefinedProviders,
       selectedModel: null,
+      utilityModel: null,
       setModelProviders: (modelProviders: ModelProvider[]) => set({ modelProviders }),
       updateProvider: (providerId: string, updates: Partial<ModelProvider>) => {
         const { modelProviders } = get();
@@ -60,11 +63,16 @@ export const useProviderStore = create<ProviderState>()(
         set({ modelProviders: updatedProviders, selectedModel: newSelectedModel });
       },
       setSelectedModel: (selectedModel: SelectedModel | null) => set({ selectedModel }),
+      setUtilityModel: (utilityModel: SelectedModel | null) => set({ utilityModel }),
     }),
     {
       name: tauriStorageKey.modelProvider,
       storage: createJSONStorage(() => tauriStorage),
-      partialize: (state) => ({ modelProviders: state.modelProviders, selectedModel: state.selectedModel }),
+      partialize: (state) => ({
+        modelProviders: state.modelProviders,
+        selectedModel: state.selectedModel,
+        utilityModel: state.utilityModel,
+      }),
     },
   ),
 );

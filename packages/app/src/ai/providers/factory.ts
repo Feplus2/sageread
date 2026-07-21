@@ -1,4 +1,4 @@
-import { useProviderStore } from "@/store/provider-store";
+import { type SelectedModel, useProviderStore } from "@/store/provider-store";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -101,6 +101,16 @@ export function createModelInstance(providerId: string, modelId: string) {
 
   // 返回模型实例
   return providerInstance(modelId);
+}
+
+/**
+ * 获取用于轻量任务（生成对话标题、语义上下文、AI 标签等）的辅助模型
+ * 未配置辅助模型时回落到当前聊天选中模型
+ * _task 为将来按任务类型分配模型预留，当前忽略
+ */
+export function getUtilityModel(_task?: string): SelectedModel | null {
+  const { utilityModel, selectedModel } = useProviderStore.getState();
+  return utilityModel ?? selectedModel;
 }
 
 /**

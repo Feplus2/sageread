@@ -1,5 +1,4 @@
-import { createModelInstance } from "@/ai/providers/factory";
-import { useProviderStore } from "@/store/provider-store";
+import { createModelInstance, getUtilityModel } from "@/ai/providers/factory";
 import { generateText } from "ai";
 
 export interface AIContextResponse {
@@ -20,13 +19,14 @@ export async function generateContextWithAI(
   try {
     let modelConfig = selectedModel;
     if (!modelConfig) {
-      const { selectedModel: storeModel } = useProviderStore.getState();
-      if (!storeModel) {
+      // 显式传参优先，否则用辅助模型（未配置时回落当前聊天模型）
+      const utilityModel = getUtilityModel();
+      if (!utilityModel) {
         throw new Error("没有选中的AI模型，请先在设置中配置AI模型");
       }
       modelConfig = {
-        providerId: storeModel.providerId,
-        modelId: storeModel.modelId,
+        providerId: utilityModel.providerId,
+        modelId: utilityModel.modelId,
       };
     }
 

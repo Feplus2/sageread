@@ -1,5 +1,4 @@
-import { createModelInstance } from "@/ai/providers/factory";
-import { useProviderStore } from "@/store/provider-store";
+import { createModelInstance, getUtilityModel } from "@/ai/providers/factory";
 import type { SimpleBook } from "@/types/simple-book";
 import { generateText } from "ai";
 import type { Tag } from "./tag-service";
@@ -25,16 +24,16 @@ export async function generateTagsWithAI(
   selectedModel?: { providerId: string; modelId: string },
 ): Promise<AITagResponse> {
   try {
-    // 获取当前选中的模型，如果没有传入则从store获取
+    // 获取辅助模型，如果没有传入则回落（未配置辅助模型时用当前聊天模型）
     let modelConfig = selectedModel;
     if (!modelConfig) {
-      const { selectedModel: storeModel } = useProviderStore.getState();
-      if (!storeModel) {
+      const utilityModel = getUtilityModel();
+      if (!utilityModel) {
         throw new Error("没有选中的AI模型，请先在设置中配置AI模型");
       }
       modelConfig = {
-        providerId: storeModel.providerId,
-        modelId: storeModel.modelId,
+        providerId: utilityModel.providerId,
+        modelId: utilityModel.modelId,
       };
     }
 

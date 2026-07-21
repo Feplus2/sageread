@@ -26,9 +26,15 @@ interface ModelSelectorProps {
   selectedModel: SelectedModel | null;
   onModelSelect: (model: SelectedModel) => void;
   className?: string;
+  placeholder?: string;
 }
 
-export default function ModelSelector({ selectedModel, onModelSelect, className }: ModelSelectorProps) {
+export default function ModelSelector({
+  selectedModel,
+  onModelSelect,
+  className,
+  placeholder = "选择模型",
+}: ModelSelectorProps) {
   const { modelProviders } = useProviderStore();
   const [searchTerm, setSearchTerm] = useState("");
   const [open, setOpen] = useState(false);
@@ -119,7 +125,7 @@ export default function ModelSelector({ selectedModel, onModelSelect, className 
                 </span>
               </>
             ) : (
-              <span className="text-muted-foreground text-xs dark:text-neutral-400">选择模型</span>
+              <span className="text-muted-foreground text-xs dark:text-neutral-400">{placeholder}</span>
             )}
           </div>
           <ChevronDown className="h-3 w-3 flex-shrink-0" />

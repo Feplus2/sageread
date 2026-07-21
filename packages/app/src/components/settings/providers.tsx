@@ -1,3 +1,4 @@
+import ModelSelector from "@/components/side-chat/model-selector";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,7 @@ interface ProvidersSettingsProps {
 }
 
 export default function ProvidersSettings({ onProviderSelect }: ProvidersSettingsProps) {
-  const { modelProviders, setModelProviders, addProvider } = useProviderStore();
+  const { modelProviders, utilityModel, setModelProviders, setUtilityModel, addProvider } = useProviderStore();
 
   const toggleProviderEnabled = (providerId: string) => {
     const updatedProviders = modelProviders.map((provider) =>
@@ -25,7 +26,29 @@ export default function ProvidersSettings({ onProviderSelect }: ProvidersSetting
   };
 
   return (
-    <div className="p-4 pt-3">
+    <div className="space-y-4 p-4 pt-3">
+      <div className="rounded-lg bg-muted/80 p-4">
+        <h2 className="text mb-4 dark:text-neutral-200">辅助模型</h2>
+        <div className="flex items-start justify-between gap-4">
+          <p className="mt-1 text-neutral-600 text-xs dark:text-neutral-400">
+            用于生成对话标题、语义上下文、AI 标签等轻量任务，推荐选择便宜快速的模型；留空则跟随当前聊天模型
+          </p>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <ModelSelector
+              selectedModel={utilityModel}
+              onModelSelect={(model) => setUtilityModel(model)}
+              placeholder="跟随聊天模型"
+              className="w-48"
+            />
+            {utilityModel && (
+              <Button variant="ghost" size="sm" onClick={() => setUtilityModel(null)}>
+                清除
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-lg bg-muted/80 p-4">
         <div className="flex items-center justify-between border-b pb-4">
           <h2 className="text dark:text-neutral-200">模型提供商</h2>
