@@ -12,10 +12,12 @@ import {
   getThreadContext,
   updateThreadContext,
 } from "@/services/thread-service";
+import { generateThreadTitleWithAI } from "@/services/thread-title-service";
 import { type SelectedModel, useProviderStore } from "@/store/provider-store";
 import { useThreadStore } from "@/store/thread-store";
 import type { ChatReference, MessageMetadata } from "@/types/message";
 import type { Thread, ThreadSummary } from "@/types/thread";
+import { useQueryClient } from "@tanstack/react-query";
 import type { UIMessage } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -86,6 +88,7 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
   const currentThread = options.currentThread !== undefined ? options.currentThread : globalThreadStore.currentThread;
   const setCurrentThread = options.setCurrentThread || globalThreadStore.setCurrentThread;
   const forceUpdate = useForceUpdate();
+  const queryClient = useQueryClient();
 
   const messagesRef = useRef<UIMessage[]>([]);
   const reasoningTimesRef = useRef<{ [messageId: string]: ReasoningTimes }>({});
@@ -155,11 +158,38 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
           return;
         }
 
+        // 首轮问答完成后，若标题仍是占位标题（首条消息截断或"新对话"），用 AI 异步生成简短标题
+        const autoNameFirstRound = (thread: Thread) => {
+          const userMessages = normalizedMessages.filter((m) => m.role === "user");
+          const assistantMessages = normalizedMessages.filter((m) => m.role === "assistant");
+          if (userMessages.length !== 1 || assistantMessages.length !== 1) return;
+
+          const firstUserParts = userMessages[0]?.parts ?? [];
+          const firstUserText = firstUserParts.map((p: any) => (p.type === "text" ? p.text : "")).join("");
+          const firstQuoteText = (firstUserParts.find((p: any) => p.type === "quote") as any)?.text || "";
+          const placeholderTitle = (firstUserText || firstQuoteText || "新对话").slice(0, 50);
+          const isPlaceholderTitle = !thread.title || thread.title === "新对话" || thread.title === placeholderTitle;
+          if (!isPlaceholderTitle) return;
+
+          generateThreadTitleWithAI(normalizedMessages, selectedModel ?? undefined)
+            .then(async (title) => {
+              if (!title) return;
+              const renamedThread = await editThread(thread.id, { title });
+              setCurrentThread(renamedThread);
+              queryClient.invalidateQueries({ queryKey: ["threads"] });
+            })
+            .catch((error) => {
+              // 自动命名失败静默处理，保留占位标题
+              console.warn("AI 自动命名失败，保留占位标题:", error);
+            });
+        };
+
         const persistMessages = (threadId: string) =>
           editThread(threadId, { messages: normalizedMessages })
             .then((updatedThread) => {
               console.log("Thread updated successfully:", updatedThread.id);
               setCurrentThread(updatedThread);
+              autoNameFirstRound(updatedThread);
             })
             .catch((error) => {
               console.error("Failed to update thread:", error);
