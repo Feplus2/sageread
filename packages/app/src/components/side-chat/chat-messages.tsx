@@ -6,13 +6,27 @@ import { Button } from "@/components/ui/button";
 import { useIsChatPage } from "@/hooks/use-is-chat-page";
 import { type ReasoningTimes, useReasoningTimer } from "@/hooks/use-reasoning-timer";
 import { useTextSelection } from "@/hooks/use-text-selection";
+import { exportMessagesToImage } from "@/lib/export-thread-image";
+import { exportMessageToMarkdown } from "@/lib/export-thread-markdown";
 import { cn } from "@/lib/utils";
 import { audioPlayerManager, synthesizeSpeechChunked } from "@/services/tts-service";
+import { useThreadStore } from "@/store/thread-store";
 import { useTTSStore } from "@/store/tts-store";
 import { getReasoningTimes } from "@/types/message";
 import type { UIMessage, UIMessagePart } from "ai";
 import dayjs from "dayjs";
-import { Brain, Check, Copy, Loader2, Pause, Quote, RefreshCw, Volume2 } from "lucide-react";
+import {
+  Brain,
+  Check,
+  Copy,
+  Download,
+  Image as ImageIcon,
+  Loader2,
+  Pause,
+  Quote,
+  RefreshCw,
+  Volume2,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useStickToBottomContext } from "use-stick-to-bottom";
@@ -42,6 +56,10 @@ interface ChatMessagesProps {
   canRetry?: boolean;
   onAskSelection?: (text: string) => void;
   onViewToolDetail?: (toolPart: any) => void;
+  /** 多选导出模式：显示勾选框、隐藏单条操作、整行点击切换选中 */
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (messageId: string) => void;
 }
 
 export function reorderTextAndReasoning(message: UIMessage): UIMessage {
@@ -74,6 +92,9 @@ export function ChatMessages({
   canRetry = true,
   onAskSelection,
   onViewToolDetail,
+  selectionMode = false,
+  selectedIds,
+  onToggleSelect,
 }: ChatMessagesProps) {
   const { scrollToBottom } = useStickToBottomContext();
   const isChatPage = useIsChatPage();
@@ -361,121 +382,176 @@ export function ChatMessages({
             key={message.id}
             className={cn("mx-auto flex w-full max-w-3xl flex-col items-start gap-2", isChatPage ? "px-4" : "px-2")}
           >
-            {isAssistant ? (
-              <div data-region="chat-message-assistant" className="group flex w-full flex-col gap-0">
-                {renderMessageParts(reorderedMessage.parts, isLastMessage, true, message.id)}
-                {((!isStreaming && isLastMessage) || !isLastMessage) && (
-                  <div className="flex items-center justify-between">
-                    <MessageActions className="-ml-2.5 flex transform-gpu gap-0">
-                      {canShowRetry && (
-                        <MessageAction tooltip="刷新重试" delayDuration={100}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 rounded-full"
-                            disabled={!canRetry}
-                            onClick={() => {
-                              onRetry?.();
-                            }}
-                          >
-                            <RefreshCw size={12} />
-                          </Button>
-                        </MessageAction>
-                      )}
-                      <MessageAction tooltip={copiedMessageIds.has(message.id) ? "已复制" : "复制"} delayDuration={100}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-7 rounded-full"
-                          onClick={() => {
-                            const textContent = message.parts
-                              .map((part: any) => (part.type === "text" ? part.text : ""))
-                              .join("");
-                            handleCopy(message.id, textContent);
-                          }}
-                        >
-                          {copiedMessageIds.has(message.id) ? <Check size={10} /> : <Copy size={10} />}
-                        </Button>
-                      </MessageAction>
-
-                      <MessageAction
-                        tooltip={
-                          audioStates.get(message.id) === "playing"
-                            ? "暂停"
-                            : audioStates.get(message.id) === "paused"
-                              ? "继续"
-                              : "播放语音"
-                        }
-                        delayDuration={100}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-7 rounded-full"
-                          disabled={audioStates.get(message.id) === "loading"}
-                          onClick={() => {
-                            const textContent = getFilteredTextFromDOM(message.id);
-                            handlePlayAudio(message.id, textContent);
-                          }}
-                        >
-                          {audioStates.get(message.id) === "loading" ? (
-                            <Loader2 size={10} className="animate-spin" />
-                          ) : audioStates.get(message.id) === "playing" ? (
-                            <Pause size={10} />
-                          ) : (
-                            <Volume2 size={10} />
+            <div
+              className={cn("w-full", selectionMode && "flex cursor-pointer items-start gap-2")}
+              onClick={selectionMode ? () => onToggleSelect?.(message.id) : undefined}
+            >
+              {selectionMode && (
+                <div
+                  className={cn(
+                    "mt-1 flex size-4 flex-shrink-0 items-center justify-center rounded border transition-colors",
+                    selectedIds?.has(message.id)
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-neutral-400 dark:border-neutral-500",
+                  )}
+                >
+                  {selectedIds?.has(message.id) && <Check size={12} />}
+                </div>
+              )}
+              <div className={selectionMode ? "min-w-0 flex-1" : undefined}>
+                {isAssistant ? (
+                  <div data-region="chat-message-assistant" className="group flex w-full flex-col gap-0">
+                    {renderMessageParts(reorderedMessage.parts, isLastMessage, true, message.id)}
+                    {((!isStreaming && isLastMessage) || !isLastMessage) && !selectionMode && (
+                      <div className="flex items-center justify-between">
+                        <MessageActions className="-ml-2.5 flex transform-gpu gap-0">
+                          {canShowRetry && (
+                            <MessageAction tooltip="刷新重试" delayDuration={100}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 rounded-full"
+                                disabled={!canRetry}
+                                onClick={() => {
+                                  onRetry?.();
+                                }}
+                              >
+                                <RefreshCw size={12} />
+                              </Button>
+                            </MessageAction>
                           )}
-                        </Button>
-                      </MessageAction>
-                    </MessageActions>
-                    {message.metadata && (
-                      <div className="flex items-center gap-2 text-neutral-500 text-xs dark:text-neutral-400">
-                        {message.metadata.totalUsage && (
-                          <span className="text-xs">{message.metadata.totalUsage.totalTokens} tokens</span>
-                        )}
-                        {message.metadata.updatedAt && (
-                          <span className="text-xs">
-                            {dayjs(message.metadata.updatedAt * 1000).format("YYYY-MM-DD HH:mm:ss")}
-                          </span>
+                          <MessageAction
+                            tooltip={copiedMessageIds.has(message.id) ? "已复制" : "复制"}
+                            delayDuration={100}
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 rounded-full"
+                              onClick={() => {
+                                const textContent = message.parts
+                                  .map((part: any) => (part.type === "text" ? part.text : ""))
+                                  .join("");
+                                handleCopy(message.id, textContent);
+                              }}
+                            >
+                              {copiedMessageIds.has(message.id) ? <Check size={10} /> : <Copy size={10} />}
+                            </Button>
+                          </MessageAction>
+
+                          <MessageAction tooltip="导出为 Markdown" delayDuration={100}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 rounded-full"
+                              onClick={() => {
+                                void exportMessageToMarkdown(message, {
+                                  threadTitle: useThreadStore.getState().currentThread?.title,
+                                  index,
+                                });
+                              }}
+                            >
+                              <Download size={10} />
+                            </Button>
+                          </MessageAction>
+
+                          <MessageAction tooltip="导出为图片" delayDuration={100}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 rounded-full"
+                              onClick={() => {
+                                const { currentThread } = useThreadStore.getState();
+                                void exportMessagesToImage([message], {
+                                  title: `${currentThread?.title || "未命名对话"}-第${index + 1}条`,
+                                  bookId: currentThread?.book_id,
+                                  successText: "消息导出成功",
+                                });
+                              }}
+                            >
+                              <ImageIcon size={10} />
+                            </Button>
+                          </MessageAction>
+
+                          <MessageAction
+                            tooltip={
+                              audioStates.get(message.id) === "playing"
+                                ? "暂停"
+                                : audioStates.get(message.id) === "paused"
+                                  ? "继续"
+                                  : "播放语音"
+                            }
+                            delayDuration={100}
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 rounded-full"
+                              disabled={audioStates.get(message.id) === "loading"}
+                              onClick={() => {
+                                const textContent = getFilteredTextFromDOM(message.id);
+                                handlePlayAudio(message.id, textContent);
+                              }}
+                            >
+                              {audioStates.get(message.id) === "loading" ? (
+                                <Loader2 size={10} className="animate-spin" />
+                              ) : audioStates.get(message.id) === "playing" ? (
+                                <Pause size={10} />
+                              ) : (
+                                <Volume2 size={10} />
+                              )}
+                            </Button>
+                          </MessageAction>
+                        </MessageActions>
+                        {message.metadata && (
+                          <div className="flex items-center gap-2 text-neutral-500 text-xs dark:text-neutral-400">
+                            {message.metadata.totalUsage && (
+                              <span className="text-xs">{message.metadata.totalUsage.totalTokens} tokens</span>
+                            )}
+                            {message.metadata.updatedAt && (
+                              <span className="text-xs">
+                                {dayjs(message.metadata.updatedAt * 1000).format("YYYY-MM-DD HH:mm:ss")}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
+                    {showError && (
+                      <div className="mt-2 w-full rounded-lg border border-red-200 bg-red-50 p-3 text-red-800 text-xs dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                        错误: {errorMessage}
+                      </div>
+                    )}
                   </div>
-                )}
-                {showError && (
-                  <div className="mt-2 w-full rounded-lg border border-red-200 bg-red-50 p-3 text-red-800 text-xs dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
-                    错误: {errorMessage}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div
-                data-region="chat-message-user"
-                className={cn("group mt-7 flex max-w-full flex-col", isFirstMessage && "mt-0")}
-              >
-                {renderMessageParts(reorderedMessage.parts, isLastMessage, false, message.id)}
+                ) : (
+                  <div
+                    data-region="chat-message-user"
+                    className={cn("group mt-7 flex max-w-full flex-col", isFirstMessage && "mt-0")}
+                  >
+                    {renderMessageParts(reorderedMessage.parts, isLastMessage, false, message.id)}
 
-                <MessageActions
-                  className={cn(
-                    "flex transform-gpu justify-end gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
-                  )}
-                >
-                  {canShowRetry && (
-                    <MessageAction tooltip="刷新重试" delayDuration={100}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 rounded-full hover:bg-white dark:hover:bg-neutral-600"
-                        disabled={!canRetry}
-                        onClick={() => {
-                          onRetry?.();
-                        }}
+                    {!selectionMode && (
+                      <MessageActions
+                        className={cn(
+                          "flex transform-gpu justify-end gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
+                        )}
                       >
-                        <RefreshCw size={12} />
-                      </Button>
-                    </MessageAction>
-                  )}
-                  {/* TODO: 实现编辑功能
+                        {canShowRetry && (
+                          <MessageAction tooltip="刷新重试" delayDuration={100}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 rounded-full hover:bg-white dark:hover:bg-neutral-600"
+                              disabled={!canRetry}
+                              onClick={() => {
+                                onRetry?.();
+                              }}
+                            >
+                              <RefreshCw size={12} />
+                            </Button>
+                          </MessageAction>
+                        )}
+                        {/* TODO: 实现编辑功能
                   <MessageAction tooltip="编辑" delayDuration={100}>
                     <Button
                       variant="ghost"
@@ -486,7 +562,7 @@ export function ChatMessages({
                     </Button>
                   </MessageAction>
                   */}
-                  {/* TODO: 实现删除功能
+                        {/* TODO: 实现删除功能
                   <MessageAction tooltip="删除" delayDuration={100}>
                     <Button
                       variant="ghost"
@@ -497,29 +573,67 @@ export function ChatMessages({
                     </Button>
                   </MessageAction>
                   */}
-                  <MessageAction tooltip={copiedMessageIds.has(message.id) ? "已复制" : "复制"} delayDuration={100}>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 rounded-full hover:bg-white dark:hover:bg-neutral-600"
-                      onClick={() => {
-                        const textContent = reorderedMessage.parts
-                          .map((part: any) => (part.type === "text" ? part.text : ""))
-                          .join("");
-                        handleCopy(message.id, textContent);
-                      }}
-                    >
-                      {copiedMessageIds.has(message.id) ? <Check size={12} /> : <Copy size={12} />}
-                    </Button>
-                  </MessageAction>
-                </MessageActions>
-                {showError && (
-                  <div className="mt-2 max-w-full rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-red-800 text-sm dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
-                    {errorMessage}
+                        <MessageAction
+                          tooltip={copiedMessageIds.has(message.id) ? "已复制" : "复制"}
+                          delayDuration={100}
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 rounded-full hover:bg-white dark:hover:bg-neutral-600"
+                            onClick={() => {
+                              const textContent = reorderedMessage.parts
+                                .map((part: any) => (part.type === "text" ? part.text : ""))
+                                .join("");
+                              handleCopy(message.id, textContent);
+                            }}
+                          >
+                            {copiedMessageIds.has(message.id) ? <Check size={12} /> : <Copy size={12} />}
+                          </Button>
+                        </MessageAction>
+                        <MessageAction tooltip="导出为 Markdown" delayDuration={100}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 rounded-full hover:bg-white dark:hover:bg-neutral-600"
+                            onClick={() => {
+                              void exportMessageToMarkdown(message, {
+                                threadTitle: useThreadStore.getState().currentThread?.title,
+                                index,
+                              });
+                            }}
+                          >
+                            <Download size={12} />
+                          </Button>
+                        </MessageAction>
+                        <MessageAction tooltip="导出为图片" delayDuration={100}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 rounded-full hover:bg-white dark:hover:bg-neutral-600"
+                            onClick={() => {
+                              const { currentThread } = useThreadStore.getState();
+                              void exportMessagesToImage([message], {
+                                title: `${currentThread?.title || "未命名对话"}-第${index + 1}条`,
+                                bookId: currentThread?.book_id,
+                                successText: "消息导出成功",
+                              });
+                            }}
+                          >
+                            <ImageIcon size={12} />
+                          </Button>
+                        </MessageAction>
+                      </MessageActions>
+                    )}
+                    {showError && (
+                      <div className="mt-2 max-w-full rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-red-800 text-sm dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                        {errorMessage}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
+            </div>
           </Message>
         );
       })}

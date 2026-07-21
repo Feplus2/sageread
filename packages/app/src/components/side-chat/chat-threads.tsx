@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useThreads } from "@/hooks/use-threads";
+import { exportThreadToHtml } from "@/lib/export-thread-html";
+import { exportThreadToImage } from "@/lib/export-thread-image";
 import { exportThreadToMarkdown } from "@/lib/export-thread-markdown";
 import { getThreadById } from "@/services/thread-service";
 import type { ThreadSummary } from "@/types/thread";
@@ -86,6 +88,26 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
     }
   }, []);
 
+  const handleExportHtml = useCallback(async (thread: ThreadSummary) => {
+    try {
+      const fullThread = await getThreadById(thread.id);
+      await exportThreadToHtml(fullThread);
+    } catch (error) {
+      console.error("导出对话失败:", error);
+      toast.error("导出对话失败");
+    }
+  }, []);
+
+  const handleExportImage = useCallback(async (thread: ThreadSummary) => {
+    try {
+      const fullThread = await getThreadById(thread.id);
+      await exportThreadToImage(fullThread);
+    } catch (error) {
+      console.error("导出对话失败:", error);
+      toast.error("导出对话失败");
+    }
+  }, []);
+
   const handleAiRename = useCallback(
     (thread: ThreadSummary) => {
       if (!thread.message_count) {
@@ -127,6 +149,20 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
               },
             },
             {
+              id: "export-html",
+              text: "导出为 HTML",
+              action: () => {
+                handleExportHtml(thread);
+              },
+            },
+            {
+              id: "export-image",
+              text: "导出为图片",
+              action: () => {
+                handleExportImage(thread);
+              },
+            },
+            {
               id: "delete",
               text: "删除",
               action: () => {
@@ -141,7 +177,7 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
         console.error("显示菜单失败:", error);
       }
     },
-    [handleNativeDelete, handleOpenRename, handleExportThread, handleAiRename],
+    [handleNativeDelete, handleOpenRename, handleExportThread, handleExportHtml, handleExportImage, handleAiRename],
   );
 
   if (status === "pending") {

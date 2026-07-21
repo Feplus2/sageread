@@ -1,6 +1,9 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useChatState } from "@/hooks/use-chat-state";
+import { exportMessagesToHtml } from "@/lib/export-thread-html";
+import { exportMessagesToImage } from "@/lib/export-thread-image";
+import { exportMessagesToMarkdown } from "@/lib/export-thread-markdown";
 import { useReaderStore } from "@/pages/reader/components/reader-provider";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useThemeStore } from "@/store/theme-store";
@@ -8,6 +11,7 @@ import {
   CircleQuestionMark,
   History,
   Lightbulb,
+  ListChecks,
   MessageCirclePlus,
   NotebookPen,
   ScrollText,
@@ -15,7 +19,7 @@ import {
   Settings,
   UserSearch,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChatContainerRoot } from "../prompt-kit/chat-container";
 import { ScrollButton } from "../prompt-kit/scroll-button";
 import { MindmapDialog } from "../tools/mindmap-dialog";
@@ -33,6 +37,9 @@ function ChatContent({ bookId }: ChatContentProps) {
   const { autoScroll } = useThemeStore();
   const [toolDetail, setToolDetail] = useState<any>(null);
   const [showMindmapDialog, setShowMindmapDialog] = useState(false);
+  // 多选导出：组件内状态，切换对话自动退出
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const setActiveContext = useReaderStore((state) => state.setActiveContext)!;
   const progress = useReaderStore((state) => state.progress);
   const activeContext = useReaderStore((state) => state.activeContext)!;
@@ -78,6 +85,50 @@ function ChatContent({ bookId }: ChatContentProps) {
     setToolDetail(toolPart);
     setShowMindmapDialog(true);
   };
+
+  // 多选导出
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const handleToggleSelect = (messageId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  };
+
+  const getSelectedMessages = () => messages.filter((m) => selectedIds.has(m.id));
+
+  const buildSelectionMeta = () => ({
+    title: `${currentThread?.title || "未命名对话"}-节选`,
+    bookId: currentThread?.book_id ?? bookId ?? null,
+  });
+
+  // 切换对话时退出选择模式
+  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
+  useEffect(() => {
+    exitSelectionMode();
+  }, [currentThread?.id]);
+
+  // Esc 退出选择模式
+  useEffect(() => {
+    if (!selectionMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectionMode(false);
+        setSelectedIds(new Set());
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectionMode]);
 
   const promptSuggestions = [
     { text: "总结这一页的内容", icon: ScrollText, isNew: true },
@@ -132,7 +183,7 @@ function ChatContent({ bookId }: ChatContentProps) {
   );
 
   return (
-    <main id="chat-sidebar" data-region="chat-panel" className="flex h-full flex-col overflow-hidden ">
+    <main id="chat-sidebar" data-region="chat-panel" className="relative flex h-full flex-col overflow-hidden ">
       <div className="ml-1 flex-shrink-0 border-neutral-300 dark:border-neutral-700">
         <div className="flex h-8 items-center justify-between">
           <div className="flex items-center gap-2 pl-0.5">
@@ -143,6 +194,19 @@ function ChatContent({ bookId }: ChatContentProps) {
             />
           </div>
           <div className="flex items-center gap-0">
+            {messages.length > 0 && !showThreads && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`z-40 size-7 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-700 ${
+                  selectionMode ? "bg-neutral-200 dark:bg-neutral-700" : ""
+                }`}
+                title="选择导出"
+                onClick={() => (selectionMode ? exitSelectionMode() : setSelectionMode(true))}
+              >
+                <ListChecks className="h-5 w-5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -192,6 +256,9 @@ function ChatContent({ bookId }: ChatContentProps) {
             canRetry={status === "ready" && !!displayError}
             onAskSelection={handleAskSelection}
             onViewToolDetail={handleViewToolDetail}
+            selectionMode={selectionMode}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
           />
           <div className="-translate-x-1/2 pointer-events-none absolute bottom-4 left-1/2 flex w-full max-w-3xl justify-end px-5">
             <div className="pointer-events-auto">
@@ -199,6 +266,39 @@ function ChatContent({ bookId }: ChatContentProps) {
             </div>
           </div>
         </ChatContainerRoot>
+      )}
+
+      {selectionMode && !showThreads && (
+        <div className="-translate-x-1/2 absolute bottom-20 left-1/2 z-40 flex items-center gap-2 rounded-xl border bg-background px-3 py-2 shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
+          <span className="text-neutral-600 text-xs dark:text-neutral-400">已选 {selectedIds.size} 条</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={selectedIds.size === 0}
+            onClick={() => void exportMessagesToMarkdown(getSelectedMessages(), buildSelectionMeta())}
+          >
+            Markdown
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={selectedIds.size === 0}
+            onClick={() => void exportMessagesToHtml(getSelectedMessages(), buildSelectionMeta())}
+          >
+            HTML
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={selectedIds.size === 0}
+            onClick={() => void exportMessagesToImage(getSelectedMessages(), buildSelectionMeta())}
+          >
+            图片
+          </Button>
+          <Button variant="ghost" size="sm" onClick={exitSelectionMode}>
+            取消
+          </Button>
+        </div>
       )}
 
       {!showThreads && bookId && (
