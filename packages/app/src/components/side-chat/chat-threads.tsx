@@ -1,12 +1,17 @@
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { useThreads } from "@/hooks/use-threads";
+import { exportThreadToMarkdown } from "@/lib/export-thread-markdown";
+import { getThreadById } from "@/services/thread-service";
 import type { ThreadSummary } from "@/types/thread";
 import { Menu } from "@tauri-apps/api/menu";
 import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import dayjs from "dayjs";
 import { ArrowLeft, MessageCircle } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
+import { toast } from "sonner";
 
 interface ChatThreadsProps {
   bookId: string | undefined;
@@ -15,7 +20,18 @@ interface ChatThreadsProps {
 }
 
 export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps) {
-  const { threads, error, status, handleDeleteThread: deleteThreadFn } = useThreads({ bookId });
+  const {
+    threads,
+    error,
+    status,
+    handleDeleteThread: deleteThreadFn,
+    handleRenameThread: renameThreadFn,
+    handleAiRenameThread: aiRenameThreadFn,
+  } = useThreads({ bookId });
+
+  const [renameTarget, setRenameTarget] = useState<ThreadSummary | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
 
   const handleNativeDelete = useCallback(
     async (thread: ThreadSummary) => {
@@ -35,6 +51,52 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
     [deleteThreadFn],
   );
 
+  const handleOpenRename = useCallback((thread: ThreadSummary) => {
+    setRenameTitle(thread.title || "");
+    setRenameTarget(thread);
+  }, []);
+
+  const handleConfirmRename = useCallback(async () => {
+    if (!renameTarget) return;
+
+    const title = renameTitle.trim();
+    if (!title) {
+      toast.error("标题不能为空");
+      return;
+    }
+
+    setIsRenaming(true);
+    try {
+      await renameThreadFn(renameTarget.id, title);
+      setRenameTarget(null);
+    } catch {
+      // 失败提示已在 useThreads 中处理
+    } finally {
+      setIsRenaming(false);
+    }
+  }, [renameTarget, renameTitle, renameThreadFn]);
+
+  const handleExportThread = useCallback(async (thread: ThreadSummary) => {
+    try {
+      const fullThread = await getThreadById(thread.id);
+      await exportThreadToMarkdown(fullThread);
+    } catch (error) {
+      console.error("导出对话失败:", error);
+      toast.error("导出对话失败");
+    }
+  }, []);
+
+  const handleAiRename = useCallback(
+    (thread: ThreadSummary) => {
+      if (!thread.message_count) {
+        toast.error("对话为空，无法生成标题");
+        return;
+      }
+      aiRenameThreadFn(thread.id);
+    },
+    [aiRenameThreadFn],
+  );
+
   const handleMenuClick = useCallback(
     (thread: ThreadSummary) => async (menuEvent: React.MouseEvent) => {
       menuEvent.preventDefault();
@@ -43,6 +105,27 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
       try {
         const menu = await Menu.new({
           items: [
+            {
+              id: "rename",
+              text: "重命名",
+              action: () => {
+                handleOpenRename(thread);
+              },
+            },
+            {
+              id: "ai-rename",
+              text: "AI 重命名",
+              action: () => {
+                handleAiRename(thread);
+              },
+            },
+            {
+              id: "export-markdown",
+              text: "导出为 Markdown",
+              action: () => {
+                handleExportThread(thread);
+              },
+            },
             {
               id: "delete",
               text: "删除",
@@ -58,7 +141,7 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
         console.error("显示菜单失败:", error);
       }
     },
-    [handleNativeDelete],
+    [handleNativeDelete, handleOpenRename, handleExportThread, handleAiRename],
   );
 
   if (status === "pending") {
@@ -170,6 +253,44 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
           </div>
         )}
       </div>
+
+      <Dialog
+        open={!!renameTarget}
+        onOpenChange={(open) => {
+          if (!open && !isRenaming) {
+            setRenameTarget(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>重命名对话</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 p-4">
+            <Input
+              value={renameTitle}
+              onChange={(e) => setRenameTitle(e.target.value)}
+              placeholder="输入新的对话标题"
+              maxLength={50}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !isRenaming) {
+                  e.preventDefault();
+                  handleConfirmRename();
+                }
+              }}
+            />
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setRenameTarget(null)} disabled={isRenaming}>
+                取消
+              </Button>
+              <Button onClick={handleConfirmRename} disabled={isRenaming || !renameTitle.trim()} className="min-w-24">
+                {isRenaming ? "保存中..." : "确定"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

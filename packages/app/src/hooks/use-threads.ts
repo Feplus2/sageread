@@ -1,4 +1,6 @@
-import { deleteThread, getAllThreads, getThreadsBybookId } from "@/services/thread-service";
+import { deleteThread, editThread, getAllThreads, getThreadById, getThreadsBybookId } from "@/services/thread-service";
+import { generateThreadTitleWithAI } from "@/services/thread-title-service";
+import { useThreadStore } from "@/store/thread-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { toast } from "sonner";
@@ -41,6 +43,65 @@ export const useThreads = ({ bookId }: UseThreadsProps = {}) => {
     [queryClient, bookId],
   );
 
+  // 重命名 thread
+  const handleRenameThread = useCallback(
+    async (threadId: string, title: string) => {
+      try {
+        const updatedThread = await editThread(threadId, { title });
+        toast.success("对话重命名成功");
+
+        // 若重命名的是当前对话，同步更新 store
+        const { currentThread, setCurrentThread } = useThreadStore.getState();
+        if (currentThread?.id === threadId) {
+          setCurrentThread(updatedThread);
+        }
+
+        // 刷新所有 threads 列表
+        queryClient.invalidateQueries({ queryKey: ["threads"] });
+      } catch (error) {
+        console.error("重命名对话失败:", error);
+        toast.error("重命名对话失败");
+        throw error;
+      }
+    },
+    [queryClient],
+  );
+
+  // AI 重命名 thread（基于当前全部对话内容，手动触发）
+  const handleAiRenameThread = useCallback(
+    async (threadId: string) => {
+      const toastId = toast.loading("正在生成标题...");
+      try {
+        const thread = await getThreadById(threadId);
+        if (!thread.messages?.length) {
+          toast.error("对话为空，无法生成标题", { id: toastId });
+          return;
+        }
+
+        const title = await generateThreadTitleWithAI(thread.messages);
+        if (!title) {
+          throw new Error("未能生成标题");
+        }
+
+        const updatedThread = await editThread(threadId, { title });
+
+        // 若重命名的是当前对话，同步更新 store
+        const { currentThread, setCurrentThread } = useThreadStore.getState();
+        if (currentThread?.id === threadId) {
+          setCurrentThread(updatedThread);
+        }
+
+        // 刷新所有 threads 列表
+        queryClient.invalidateQueries({ queryKey: ["threads"] });
+        toast.success(`已重命名为「${title}」`, { id: toastId });
+      } catch (error) {
+        console.error("AI 重命名失败:", error);
+        toast.error("AI 重命名失败", { id: toastId });
+      }
+    },
+    [queryClient],
+  );
+
   return {
     // 查询相关
     threads: threads ?? [],
@@ -50,5 +111,7 @@ export const useThreads = ({ bookId }: UseThreadsProps = {}) => {
 
     // 操作相关
     handleDeleteThread,
+    handleRenameThread,
+    handleAiRenameThread,
   };
 };
