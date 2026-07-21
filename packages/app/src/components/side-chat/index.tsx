@@ -132,7 +132,7 @@ function ChatContent({ bookId }: ChatContentProps) {
   );
 
   return (
-    <main id="chat-sidebar" className="flex h-full flex-col overflow-hidden ">
+    <main id="chat-sidebar" data-region="chat-panel" className="flex h-full flex-col overflow-hidden ">
       <div className="ml-1 flex-shrink-0 border-neutral-300 dark:border-neutral-700">
         <div className="flex h-8 items-center justify-between">
           <div className="flex items-center gap-2 pl-0.5">

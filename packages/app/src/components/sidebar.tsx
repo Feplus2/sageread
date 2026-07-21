@@ -137,7 +137,11 @@ export default function Sidebar() {
 
   return (
     <>
-      <aside ref={sidebarRef} className="z-40 flex h-full w-48 select-none flex-col overflow-hidden border-neutral-200">
+      <aside
+        ref={sidebarRef}
+        data-region="app-sidebar"
+        className="z-40 flex h-full w-48 select-none flex-col overflow-hidden border-neutral-200"
+      >
         <div className="p-1 pt-2 pl-2">
           <SearchToggle searchQuery={searchQuery} onSearchChange={handleSearchChange} />
         </div>

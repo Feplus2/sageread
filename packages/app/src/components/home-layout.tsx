@@ -90,7 +90,7 @@ const HomeLayout = () => {
 
         <Sidebar />
 
-        <div className="h-full flex-1 overflow-hidden p-1">
+        <div data-region="app-main" className="h-full flex-1 overflow-hidden p-1">
           <Routes>
             <Route
               path="/"

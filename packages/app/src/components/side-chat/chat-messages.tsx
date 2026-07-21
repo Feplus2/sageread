@@ -362,7 +362,7 @@ export function ChatMessages({
             className={cn("mx-auto flex w-full max-w-3xl flex-col items-start gap-2", isChatPage ? "px-4" : "px-2")}
           >
             {isAssistant ? (
-              <div className="group flex w-full flex-col gap-0">
+              <div data-region="chat-message-assistant" className="group flex w-full flex-col gap-0">
                 {renderMessageParts(reorderedMessage.parts, isLastMessage, true, message.id)}
                 {((!isStreaming && isLastMessage) || !isLastMessage) && (
                   <div className="flex items-center justify-between">
@@ -449,7 +449,10 @@ export function ChatMessages({
                 )}
               </div>
             ) : (
-              <div className={cn("group mt-7 flex max-w-full flex-col", isFirstMessage && "mt-0")}>
+              <div
+                data-region="chat-message-user"
+                className={cn("group mt-7 flex max-w-full flex-col", isFirstMessage && "mt-0")}
+              >
                 {renderMessageParts(reorderedMessage.parts, isLastMessage, false, message.id)}
 
                 <MessageActions

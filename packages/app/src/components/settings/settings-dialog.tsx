@@ -188,7 +188,7 @@ export default function SettingsDialog({ open, onOpenChange }: SettingsDialogPro
           <DialogTitle className="dark:text-neutral-100">设置</DialogTitle>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-1 dark:bg-neutral-900">
+        <div data-region="settings-panel" className="flex min-h-0 flex-1 dark:bg-neutral-900">
           <div className="w-48 flex-shrink-0 overflow-y-auto border-neutral-200 border-r p-3 px-2 dark:border-neutral-800 dark:bg-neutral-900">
             <nav className="space-y-1">{settingsItems.map((item) => renderSidebarItem(item))}</nav>
           </div>

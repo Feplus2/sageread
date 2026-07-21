@@ -38,6 +38,16 @@ export default function ReaderLayout() {
 
   const isWindows = getOSPlatform() === "windows";
 
+  // 启动时应用持久化的全局主题（值来自 localStorage 同步读取，无异步恢复闪烁）
+  useEffect(() => {
+    const { refreshGlobalThemes, setGlobalTheme, globalTheme } = useThemeStore.getState();
+    refreshGlobalThemes().then(() => {
+      if (globalTheme) {
+        setGlobalTheme(globalTheme);
+      }
+    });
+  }, []);
+
   useEffect(() => {
     const handleResize = () => {
       setShowOverlay(true);
@@ -83,7 +93,10 @@ export default function ReaderLayout() {
 
   return (
     <div className="flex h-screen flex-col bg-muted">
-      <div className="select-none border-neutral-200 dark:border-neutral-700 dark:bg-tab-background">
+      <div
+        data-region="reader-tabs"
+        className="select-none border-neutral-200 dark:border-neutral-700 dark:bg-tab-background"
+      >
         <Tabs
           tabs={tabs}
           onTabActive={activateTab}
@@ -161,7 +174,10 @@ export default function ReaderLayout() {
                 );
               }}
             >
-              <div className={swapSidebars ? "ml-1 h-[calc(100dvh-48px)]" : "mr-1 h-[calc(100dvh-48px)]"}>
+              <div
+                data-region="notepad-panel"
+                className={swapSidebars ? "ml-1 h-[calc(100dvh-48px)]" : "mr-1 h-[calc(100dvh-48px)]"}
+              >
                 <NotepadContainer bookId={tab.bookId} />
               </div>
             </Resizable>

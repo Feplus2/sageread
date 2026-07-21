@@ -531,6 +531,7 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
       <div className="group cursor-pointer" onClick={handleClick}>
         <div
           onContextMenu={handleMenuClick}
+          data-region="book-card"
           className="rounded-r-2xl rounded-l-md border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-neutral-700 dark:bg-neutral-800"
         >
           <div className="relative p-2 pb-0">
@@ -538,7 +539,7 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
               <h4 className="truncate text-neutral-600 text-sm leading-tight dark:text-neutral-200">{book.title}</h4>
             </div>
 
-            <div className="aspect-[4/5] w-full overflow-hidden">
+            <div data-region="book-cover" className="aspect-[4/5] w-full overflow-hidden">
               {book.coverUrl ? (
                 <img src={book.coverUrl} alt={book.title} className="h-full w-full object-cover" />
               ) : (

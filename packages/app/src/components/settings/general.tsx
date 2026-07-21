@@ -6,6 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { getUserThemesDir } from "@/services/global-theme-service";
 import { useThemeStore } from "@/store/theme-store";
 import type { ThemeMode } from "@/styles/themes";
 import { getVersion } from "@tauri-apps/api/app";
@@ -25,6 +26,42 @@ export default function GeneralSettings() {
   const [appVersion, setAppVersion] = useState("0.1.0");
 
   const { themeMode, autoScroll, swapSidebars, setThemeMode, setAutoScroll, setSwapSidebars } = useThemeStore();
+  const { globalTheme, availableGlobalThemes, setGlobalTheme, refreshGlobalThemes } = useThemeStore();
+
+  // 进入设置页时扫描一次主题列表（内置 + 用户主题文件夹）
+  useEffect(() => {
+    refreshGlobalThemes();
+  }, [refreshGlobalThemes]);
+
+  const currentGlobalTheme = availableGlobalThemes.find((t) => t.name === globalTheme);
+  const globalThemeLabel = !globalTheme
+    ? "默认"
+    : currentGlobalTheme
+      ? `${currentGlobalTheme.label ?? currentGlobalTheme.name}${currentGlobalTheme.source === "user" ? "（自定义）" : ""}`
+      : globalTheme;
+
+  const handleGlobalThemeChange = async (name: string | null) => {
+    try {
+      await setGlobalTheme(name);
+    } catch (error) {
+      console.error("切换全局主题失败:", error);
+      toast.error("切换全局主题失败");
+    }
+  };
+
+  const handleOpenThemesFolder = async () => {
+    try {
+      await openPath(await getUserThemesDir());
+    } catch (error) {
+      console.error("打开主题文件夹失败:", error);
+      toast.error("打开主题文件夹失败");
+    }
+  };
+
+  const handleRefreshThemes = async () => {
+    await refreshGlobalThemes();
+    toast.success("主题列表已刷新");
+  };
 
   const themeModeOptions = [
     { value: "auto" as ThemeMode, label: "系统" },
@@ -160,6 +197,61 @@ export default function GeneralSettings() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+          </div>
+
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text dark:text-neutral-200">全局主题</span>
+              <p className="mt-2 text-neutral-600 text-xs dark:text-neutral-400">
+                自定义应用界面外观，不影响书籍内部配色
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline" className="w-36 justify-between">
+                    <span className="truncate">{globalThemeLabel}</span>
+                    <ChevronDownIcon className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-36">
+                  <DropdownMenuItem
+                    onClick={() => handleGlobalThemeChange(null)}
+                    className={clsx("my-0.5", globalTheme === null ? "bg-accent" : "")}
+                  >
+                    默认
+                  </DropdownMenuItem>
+                  {availableGlobalThemes.map((theme) => (
+                    <DropdownMenuItem
+                      key={`${theme.source}-${theme.name}`}
+                      onClick={() => handleGlobalThemeChange(theme.name)}
+                      className={clsx("my-0.5", globalTheme === theme.name ? "bg-accent" : "")}
+                    >
+                      {theme.label ?? theme.name}
+                      {theme.source === "user" ? "（自定义）" : ""}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                size="sm"
+                variant="outline"
+                className="size-8 p-0"
+                title="打开主题文件夹"
+                onClick={handleOpenThemesFolder}
+              >
+                <FolderOpen className="size-4" />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="size-8 p-0"
+                title="刷新主题列表"
+                onClick={handleRefreshThemes}
+              >
+                <RefreshCw className="size-4" />
+              </Button>
+            </div>
           </div>
 
           <div className="flex items-center justify-between">

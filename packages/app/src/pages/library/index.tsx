@@ -143,7 +143,7 @@ export default function NewLibraryPage() {
         )}
 
         {hasBooks ? (
-          <div className="flex-1 overflow-y-auto p-3 pb-8">
+          <div data-region="bookshelf" className="flex-1 overflow-y-auto p-3 pb-8">
             <div className="mx-auto">
               {searchQuery.trim() && (
                 <div className="mb-4 text-base-content/70 text-sm">
