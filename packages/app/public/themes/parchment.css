@@ -1,0 +1,469 @@
+/* @name 羊皮纸 */
+/* ============================================================
+ * SageRead 全局主题 · 羊皮纸（parchment）
+ * ------------------------------------------------------------
+ * 全局主题系统的参考模板，演示四件事：
+ *   1) 用 :root / html.dark 两套 CSS 变量覆盖做深浅配色
+ *   2) 重映射 Tailwind 的 --color-neutral-* 色阶，一次收编所有
+ *      写死 neutral 工具类的组件（本项目约 800 处，逐点覆盖不现实）
+ *   3) 用 data-region 语义钩子给具体区域定向换肤 + 动效光影
+ *   4) 美化 AI 问答区的 Markdown 排版（.prose）
+ *
+ * 作用域：只影响应用 UI，不影响书籍 iframe 内部配色。
+ * 变量默认值见 src/themes/default.css，钩子地图见 docs/THEMING.md。
+ *
+ * 级联要点：本文件由 <style id="sageread-global-theme"> 注入，
+ * 未包裹在 @layer 中——按 CSS 级联规则，未分层样式恒优先于
+ * Tailwind 的 @layer utilities，因此覆盖工具类无需 !important。
+ * ============================================================ */
+
+
+/* ---------- 1. 基础变量：浅色 ----------
+ * 应用组件的颜色大多引用这组变量，覆盖变量是换肤主手段。
+ * --shadow-warm-*：复用的暖色双层阴影（环境光 + 直射光）。 */
+:root {
+  --background: #f4e7c8;
+  --foreground: #4f3f2c;
+  --card: #f9f1dc;
+  --card-foreground: #4f3f2c;
+  --popover: #faf3e2;
+  --popover-foreground: #4f3f2c;
+  --primary: #a05a2c;
+  --primary-foreground: #faf3e2;
+  --secondary: #eee2c2;
+  --secondary-foreground: #57462f;
+  --muted: #f0e5c8;
+  --muted-foreground: #83704e;
+  --accent: #e9d6a6;
+  --accent-foreground: #4f3f2c;
+  --border: #dccfa9;
+  --input: #d3c29a;
+  --ring: #a05a2c;
+  --sidebar: #ede0ba;
+  --sidebar-foreground: #4f3f2c;
+  --sidebar-primary: #a05a2c;
+  --sidebar-primary-foreground: #faf3e2;
+  --sidebar-accent: #e5d3a2;
+  --sidebar-accent-foreground: #4f3f2c;
+  --sidebar-border: #d8c89e;
+  --sidebar-ring: #a05a2c;
+
+  /* 历史遗留 token（text-base-content 等 daisyUI 遗留类在此引用） */
+  --content: #4f3f2c;
+  --layout: #f4e7c8;
+
+  /* Tailwind neutral 色阶重映射：所有 text-neutral-* / bg-neutral-* /
+   * border-neutral-*/hover:bg-neutral-* 一次性变为暖棕灰 */
+  --color-neutral-50: #faf5e8;
+  --color-neutral-100: #f4ecd8;
+  --color-neutral-200: #eaddc0;
+  --color-neutral-300: #dccaa2;
+  --color-neutral-400: #b39a6d;
+  --color-neutral-500: #8f7752;
+  --color-neutral-600: #74603f;
+  --color-neutral-700: #5c4c34;
+  --color-neutral-800: #453a2b;
+  --color-neutral-900: #322a1f;
+  --color-neutral-950: #211b12;
+
+  --shadow-warm-sm: 0 1px 2px rgba(79, 63, 44, 0.07), 0 2px 8px rgba(79, 63, 44, 0.08);
+  --shadow-warm-md: 0 2px 4px rgba(79, 63, 44, 0.09), 0 8px 20px rgba(79, 63, 44, 0.13);
+  --shadow-warm-lg: 0 2px 6px rgba(79, 63, 44, 0.09), 0 16px 48px rgba(79, 63, 44, 0.17);
+}
+
+/* ---------- 2. 基础变量：深色 ----------
+ * neutral 色阶无需重定义：dark: 变体直接引用色阶槽位
+ * （如 dark:bg-neutral-800 命中 --color-neutral-800 暖深棕）。 */
+html.dark {
+  --background: #2b251c;
+  --foreground: #e0d2ae;
+  --card: #332b20;
+  --card-foreground: #e0d2ae;
+  --popover: #383023;
+  --popover-foreground: #e0d2ae;
+  --primary: #d29a6a;
+  --primary-foreground: #2b251c;
+  --secondary: #3d3428;
+  --secondary-foreground: #e0d2ae;
+  --muted: #3d3428;
+  --muted-foreground: #a89372;
+  --accent: #4a3f2e;
+  --accent-foreground: #e0d2ae;
+  --border: #524630;
+  --input: #524630;
+  --ring: #d29a6a;
+  --sidebar: #2b251c;
+  --sidebar-foreground: #e0d2ae;
+  --sidebar-primary: #d29a6a;
+  --sidebar-primary-foreground: #2b251c;
+  --sidebar-accent: #4a3f2e;
+  --sidebar-accent-foreground: #e0d2ae;
+  --sidebar-border: #524630;
+  --sidebar-ring: #d29a6a;
+
+  --content: #e0d2ae;
+  --layout: #2b251c;
+
+  --shadow-warm-sm: 0 1px 2px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-warm-md: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(0, 0, 0, 0.35);
+  --shadow-warm-lg: 0 2px 6px rgba(0, 0, 0, 0.3), 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- 3. 应用骨架：侧边栏分层 + 书架纸张纹理 ----------
+ * 纹理要叠加到真正可见的容器（data-region 钩子），写 body 会被
+ * 根容器不透明的 bg-muted 盖住。噪点为内联 SVG，黑色 5% 不透明度。 */
+[data-region="app-sidebar"] {
+  background-color: var(--sidebar);
+  color: var(--sidebar-foreground);
+}
+
+[data-region="reader-tabs"] {
+  background-color: var(--muted);
+}
+
+html:not(.dark) [data-region="bookshelf"] {
+  background-color: var(--background);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------- 4. 书籍卡片与封面 ----------
+ * 卡片写死了 bg-white / dark:bg-neutral-800，变量覆盖不到，
+ * 必须直接指定背景色（引用变量以便深浅两套自适应）。 */
+[data-region="book-card"] {
+  background-color: var(--card);
+  border-color: var(--border);
+  box-shadow: var(--shadow-warm-sm);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+[data-region="book-card"]:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-warm-md);
+}
+
+/* 封面"书框"：暖色描边 + 圆角 + 内阴影 */
+[data-region="book-cover"] {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    0 1px 3px rgba(79, 63, 44, 0.15);
+}
+
+[data-region="book-cover"] img {
+  border-radius: 5px;
+}
+
+/* 阅读进度条写死了 bg-blue-500，换成主题强调色（同上：未分层覆盖工具类） */
+[data-region="book-card"] .bg-blue-500 {
+  background-color: var(--primary);
+}
+
+/* ---------- 5. 交互动效与光影 ----------
+ * 克制的统一过渡：只动 transform / opacity / box-shadow / 颜色，
+ * 不引入布局动画，不影响性能。 */
+button,
+[role="button"],
+a,
+[data-slot="dropdown-menu-item"],
+[data-slot="select-item"] {
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+/* 主要按钮（default 变体带 bg-primary）：极淡线性高光 + hover 微上浮 */
+[data-slot="button"][class*="bg-primary"] {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 45%);
+  box-shadow: var(--shadow-warm-sm);
+}
+
+[data-slot="button"][class*="bg-primary"]:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-warm-md);
+}
+
+/* 弹层：多层暖色柔和阴影 + 主题边框 */
+[data-region="dialog"] {
+  background-color: var(--popover);
+  color: var(--popover-foreground);
+  border-color: var(--border);
+  box-shadow: var(--shadow-warm-lg);
+}
+
+[data-slot="dropdown-menu-content"],
+[data-slot="popover-content"],
+[data-slot="select-content"] {
+  border-color: var(--border);
+  box-shadow: var(--shadow-warm-md);
+}
+
+/* focus-visible 聚焦环统一走暖色 --ring（不留默认蓝） */
+:focus-visible {
+  outline-color: var(--ring);
+}
+
+/* Switch 组件写死了 checked 态 bg-blue-500，换成主题强调色 */
+[data-slot="switch"][data-state="checked"] {
+  background-color: var(--primary);
+}
+
+/* 滚动条：默认是半透明黑，换成暖棕 */
+::-webkit-scrollbar-thumb {
+  background: rgba(140, 110, 70, 0.35);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 110, 70, 0.5);
+}
+
+/* ---------- 6. AI 问答区 ----------
+ * 面板用卡片底与书架分层；用户气泡写死了 bg-muted，
+ * 用 钩子 + .prose 精确定位（气泡本体统一带 prose 类）。 */
+[data-region="chat-panel"] {
+  background-color: var(--card);
+  border-radius: 8px;
+}
+
+[data-region="chat-message-user"] .prose {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* ---------- 7. Markdown 排版与悬浮微交互（AI 消息的 .prose）----------
+ * 纸张呼吸感排版 + 精致 hover 反馈。
+ * 铁律：hover 只动 transform/opacity/box-shadow/颜色，不碰布局属性，防止抖动；
+ * 淡色底全部用 color-mix 从主题变量派生，深浅两套配色自动成立。
+ * 交互只挂 AI 消息（chat-message-assistant），用户气泡保持简洁。 */
+[data-region="chat-panel"] .prose {
+  color: var(--card-foreground);
+  line-height: 1.75;
+}
+
+/* 标题：收紧字重与间距，h2 左侧加赭石装饰线 */
+[data-region="chat-panel"] .prose h1,
+[data-region="chat-panel"] .prose h2,
+[data-region="chat-panel"] .prose h3,
+[data-region="chat-panel"] .prose h4 {
+  color: var(--foreground);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+/* h2 装饰线用 ::before 承载，hover 才能以 transform 做加粗动效（border 无法变换） */
+[data-region="chat-panel"] .prose h2 {
+  position: relative;
+  padding-left: 0.5em;
+}
+
+[data-region="chat-panel"] .prose h2::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  bottom: 0.18em;
+  width: 3px;
+  border-radius: 2px;
+  background-color: var(--primary);
+}
+
+/* 强调：加粗用深赭，斜体保持本色 */
+[data-region="chat-panel"] .prose strong {
+  color: #8a4a1f;
+  font-weight: 650;
+  border-radius: 3px;
+}
+
+html.dark [data-region="chat-panel"] .prose strong {
+  color: #e0aa78;
+}
+
+/* 列表：marker 用强调色，条目间留呼吸 */
+[data-region="chat-panel"] .prose li::marker {
+  color: var(--primary);
+}
+
+[data-region="chat-panel"] .prose li {
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
+}
+
+/* 行内代码：暖底圆角小块；typography 默认会补反引号，去掉 */
+[data-region="chat-panel"] .prose code {
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: #8a4a1f;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+html.dark [data-region="chat-panel"] .prose code {
+  color: #e0aa78;
+}
+
+[data-region="chat-panel"] .prose code::before,
+[data-region="chat-panel"] .prose code::after {
+  content: none;
+}
+
+/* 代码块：深暖底，行内样式复位 */
+[data-region="chat-panel"] .prose pre {
+  background-color: #3a2e1e;
+  color: #f0e6d0;
+  border-radius: 8px;
+  box-shadow: var(--shadow-warm-sm);
+}
+
+html.dark [data-region="chat-panel"] .prose pre {
+  background-color: #241d14;
+}
+
+[data-region="chat-panel"] .prose pre code {
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+/* 引用块：左侧赭石竖线 + 极淡暖底 */
+[data-region="chat-panel"] .prose blockquote {
+  border-left: 3px solid var(--primary);
+  background-color: color-mix(in srgb, var(--primary) 6%, transparent);
+  padding: 0.4em 1em;
+  border-radius: 0 6px 6px 0;
+  color: var(--muted-foreground);
+  font-style: normal;
+}
+
+/* 表格：表头淡暖底，边框若隐若现 */
+[data-region="chat-panel"] .prose th {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+[data-region="chat-panel"] .prose th,
+[data-region="chat-panel"] .prose td {
+  border-color: var(--border);
+}
+
+/* 链接：强调色 + 错位下划线 */
+[data-region="chat-panel"] .prose a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+[data-region="chat-panel"] .prose a:hover {
+  opacity: 0.8;
+}
+
+[data-region="chat-panel"] .prose hr {
+  border-color: var(--border);
+}
+
+/* --- 悬浮微交互（仅 AI 消息，统一 180ms ease）--- */
+
+/* 标题 h2/h3：hover 轻微右移 + 颜色转为强调色 */
+[data-region="chat-message-assistant"] .prose h2,
+[data-region="chat-message-assistant"] .prose h3 {
+  transition:
+    transform 0.18s ease,
+    color 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose h2:hover,
+[data-region="chat-message-assistant"] .prose h3:hover {
+  transform: translateX(2px);
+  color: var(--primary);
+}
+
+/* h2 装饰线：hover 以 transform 加粗（左端为原点向右长，不动布局） */
+[data-region="chat-message-assistant"] .prose h2::before {
+  transform-origin: left center;
+  transition: transform 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose h2:hover::before {
+  transform: scaleX(1.8);
+}
+
+/* strong：淡暖底渐显，用 box-shadow 扩罩代替 padding 垫块 */
+[data-region="chat-message-assistant"] .prose strong {
+  transition:
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose strong:hover {
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+/* 表格：整表 hover 微阴影；行级 hover 淡暖底滑入（最经典的表格悬浮反馈） */
+[data-region="chat-message-assistant"] .prose table {
+  transition: box-shadow 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose table:hover {
+  box-shadow: var(--shadow-warm-sm);
+}
+
+[data-region="chat-message-assistant"] .prose tbody tr {
+  transition: background-color 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose tbody tr:hover {
+  background-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* 行内代码：hover 底色提亮 + 微阴影 */
+[data-region="chat-message-assistant"] .prose code {
+  transition:
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose code:hover {
+  background-color: color-mix(in srgb, var(--primary) 22%, transparent);
+  box-shadow: 0 1px 3px rgba(79, 63, 44, 0.18);
+}
+
+html.dark [data-region="chat-message-assistant"] .prose code:hover {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* pre 内的 code 不参与 hover 提亮（保持代码块整体观感） */
+[data-region="chat-message-assistant"] .prose pre code:hover {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+/* 代码块：hover 阴影升档 */
+[data-region="chat-message-assistant"] .prose pre {
+  transition: box-shadow 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose pre:hover {
+  box-shadow: var(--shadow-warm-md);
+}
+
+/* 引用块：hover 竖线变浓 + 底色微深 */
+[data-region="chat-message-assistant"] .prose blockquote {
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+[data-region="chat-message-assistant"] .prose blockquote:hover {
+  border-left-color: color-mix(in srgb, var(--primary) 75%, var(--foreground));
+  background-color: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+/* 列表项：::marker 不支持 transition，hover 时 marker 只能瞬时加深（级联限制） */
+[data-region="chat-message-assistant"] .prose li:hover::marker {
+  color: color-mix(in srgb, var(--primary) 75%, var(--foreground));
+}
