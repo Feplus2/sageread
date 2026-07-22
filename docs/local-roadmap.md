@@ -101,9 +101,9 @@ feat/xxx  (PR 时才创建：从 main 开出，cherry-pick local 上的对应提
 
 | 批次 | 提交 | 依赖 | 状态 |
 |---|---|---|---|
-| **PR 1 对话功能包** | 54ca32c 导出MD、cd6b9de AI命名、b8c1348 列表菜单、616154a fix、6d917b2 辅助模型、d476825 fix、569e056 图片/HTML/多选导出、3b592f3 星标、9baea95 fix 排序 | 仅上游 main | ✅ 分支 `feat/chat-thread-features` 已建好，tsc 通过；569e056 与主题批的冲突已解（剥掉 3 行 data-region，归 PR 2 再加） |
-| **PR 2 全局主题包** | e2f090b 主题引擎+钩子、2ef551a 羊皮纸、47b590c 阅读区主题面板 | 仅上游 main；与 PR 1 在 side-chat 两文件有 3 行 data-region 交叠，后到者 rebase 时补回即可 | 未建分支 |
-| **PR 3 书籍回收站** | a64a37f | 仅上游 main（如冲突，多半又是主题批的 data-region，同法处理） | 未建分支 |
+| **PR 1 对话功能包 = [#44](https://github.com/xincmm/sageread/pull/44)** | 54ca32c 导出MD、cd6b9de AI命名、b8c1348 列表菜单、616154a fix、6d917b2 辅助模型、d476825 fix、569e056 图片/HTML/多选导出、3b592f3 星标、9baea95 fix 排序 | 仅上游 main | ✅ 已开 PR（分支 `feat/chat-thread-features`）；569e056 与主题批的冲突已解（剥掉 3 行 data-region，归 PR 2 再加） |
+| **PR 2 全局主题包 = [#45](https://github.com/xincmm/sageread/pull/45)** | e2f090b 主题引擎+钩子、2ef551a 羊皮纸、47b590c 阅读区主题面板 | 仅上游 main；与 PR 1 在 side-chat 两文件有 3 行 data-region 交叠，后到者 rebase 时补回即可 | ✅ 已开 PR（cherry-pick 零冲突，tsc 通过） |
+| **PR 3 书籍回收站 = [#46](https://github.com/xincmm/sageread/pull/46)** | a64a37f | 仅上游 main；与 PR 1 各引入 `run_migrations`（各加一段 ALTER），后到者 rebase 保留两段即可 | ✅ 已开 PR（冲突已解：剪成只含 trashed_at 迁移 + 补调用点；cargo check + tsc 通过） |
 | **PR 4 WebDAV 备份/恢复（L1）** | 0889e71（设计文档 a55932b 可带上） | 仅上游 main | 未建分支 |
 | **PR 5 L2 增量同步** | ef08132、9d33b05、8249186 审计修复、文档 f7113b5+0305b02 | **依赖 PR 1（starred 列）+ PR 3（trashed_at）+ PR 4（L1 复用）**，必须等它们合并后 rebase 再提；且真机双设备复验还没做（额度恢复后第一件事） | 暂不提 |
 
