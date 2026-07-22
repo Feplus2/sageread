@@ -36,11 +36,7 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
   const [renameTitle, setRenameTitle] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
 
-  // 星标对话排在前面，其余保持原顺序（sort 稳定）
-  const sortedThreads = useMemo(
-    () => [...threads].sort((a, b) => Number(b.starred ?? false) - Number(a.starred ?? false)),
-    [threads],
-  );
+  const sortedThreads = threads;
 
   const handleNativeDelete = useCallback(
     async (thread: ThreadSummary) => {
