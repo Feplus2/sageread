@@ -5,5 +5,6 @@ pub mod llama;
 pub mod notes;
 pub mod skills;
 pub mod state;
+pub mod sync;
 pub mod tags;
 pub mod threads;

@@ -11,6 +11,7 @@ import LlamaSettings from "./llama";
 import ProviderDetailSettings from "./provider-detail";
 import ProvidersSettings from "./providers";
 import ShortcutsSettings from "./shortcuts";
+import SyncSettings from "./sync";
 import TTSSettings from "./tts-settings";
 
 interface SettingsDialogProps {
@@ -23,6 +24,7 @@ type SettingsKey =
   | "font-manager"
   | "llama"
   | "tts"
+  | "sync"
   | "model-providers"
   | "shortcuts"
   | "provider-openai"
@@ -68,6 +70,7 @@ export default function SettingsDialog({ open, onOpenChange }: SettingsDialogPro
     { key: "font-manager", label: "字体管理" },
     { key: "llama", label: "向量模型" },
     { key: "tts", label: "语音模型" },
+    { key: "sync", label: "数据同步" },
     {
       key: "model-providers",
       label: "模型提供商",
@@ -102,6 +105,8 @@ export default function SettingsDialog({ open, onOpenChange }: SettingsDialogPro
         return <LlamaSettings />;
       case "tts":
         return <TTSSettings />;
+      case "sync":
+        return <SyncSettings />;
       case "model-providers":
         return (
           <ProvidersSettings onProviderSelect={(providerId) => setActiveKey(`provider-${providerId}` as SettingsKey)} />

@@ -7,6 +7,7 @@ import WindowControls from "@/components/window-controls";
 import { useFontEvents } from "@/hooks/use-font-events";
 import ReaderViewer from "@/pages/reader";
 import { ReaderProvider } from "@/pages/reader/components/reader-provider";
+import { syncBackupNow, syncGetConfig } from "@/services/sync-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useLayoutStore } from "@/store/layout-store";
 import { useThemeStore } from "@/store/theme-store";
@@ -46,6 +47,31 @@ export default function ReaderLayout() {
         setGlobalTheme(globalTheme);
       }
     });
+  }, []);
+
+  // WebDAV 自动备份：按配置的频率 setInterval（关闭/每小时/每天）
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    const setup = async () => {
+      try {
+        const config = await syncGetConfig();
+        if (cancelled || !config || config.auto_backup === "off" || !config.endpoint) return;
+        const intervalMs = config.auto_backup === "hourly" ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        timer = setInterval(() => {
+          syncBackupNow().catch((error) => console.warn("自动备份失败:", error));
+        }, intervalMs);
+      } catch (error) {
+        console.warn("自动备份初始化失败:", error);
+      }
+    };
+
+    setup();
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {

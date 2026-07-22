@@ -36,6 +36,10 @@ use crate::core::{
         update_skill,
     },
     state::AppState,
+    sync::commands::{
+        sync_backup_now, sync_get_config, sync_get_state, sync_list_backups, sync_restore,
+        sync_restart_app, sync_rollback, sync_save_config, sync_test_connection,
+    },
     tags::commands::{
         create_tag, delete_tag, get_tag_by_id, get_tag_by_name, get_tags, update_tag,
     },
@@ -104,6 +108,11 @@ pub fn run() {
             }
             
             tauri::async_runtime::spawn(async move {
+                // 启动时先应用待恢复数据（在数据库初始化之前）
+                if let Err(e) = core::sync::restore::apply_pending_restore(&app_handle) {
+                    log::error!("应用待恢复数据失败: {}", e);
+                }
+
                 let pool = database::initialize(&app_handle)
                     .await
                     .expect("Failed to initialize database");
@@ -175,6 +184,16 @@ pub fn run() {
             list_local_models,
             download_model_file,
             delete_local_model,
+            // sync (WebDAV 备份/恢复)
+            sync_get_config,
+            sync_save_config,
+            sync_test_connection,
+            sync_backup_now,
+            sync_list_backups,
+            sync_get_state,
+            sync_restore,
+            sync_rollback,
+            sync_restart_app,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

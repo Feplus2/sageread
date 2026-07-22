@@ -36,6 +36,8 @@ tauri-plugin-epub = { path = "plugins/tauri-plugin-epub" }
 jan-utils = { path = "utils" }
 tauri-plugin-log = "2"
 reqwest = { version = "0.12", features = ["stream"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
 futures-util = "0.3"
 tauri-plugin-os = "2"
 tauri-plugin-shell = "2"
