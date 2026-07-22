@@ -8,7 +8,7 @@ fn default_auto_backup() -> String {
     "off".to_string()
 }
 
-fn default_sync_frequency() -> String {
+pub fn default_sync_frequency() -> String {
     "30s".to_string()
 }
 
@@ -26,7 +26,7 @@ pub struct WebdavConfig {
     /// L2 增量同步开关
     #[serde(default)]
     pub l2_enabled: bool,
-    /// L2 同步频率：off / 1min / 5min / 30min
+    /// L2 同步频率：off / 30s / 5min / 30min
     #[serde(default = "default_sync_frequency")]
     pub sync_frequency: String,
 }

@@ -112,7 +112,7 @@ pub async fn sync_get_l2_status(app: AppHandle) -> Result<L2Status, String> {
         remote_dir: "sageread-backups".to_string(),
         auto_backup: "off".to_string(),
         l2_enabled: false,
-        sync_frequency: "5min".to_string(),
+        sync_frequency: super::models::default_sync_frequency(),
     });
 
     Ok(L2Status {

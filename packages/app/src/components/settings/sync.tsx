@@ -353,7 +353,7 @@ export default function SyncSettings() {
           />
         </div>
         <p className="mt-1 text-neutral-600 text-xs dark:text-neutral-400">
-          多设备经 WebDAV 双向同步书单、进度、笔记、对话等元数据（不含书籍文件与 API 密钥）；本地变更会在 30
+          多设备经 WebDAV 双向同步书单、进度、笔记、对话等元数据（不含书籍文件与 API 密钥）；本地变更会在 25
           秒内自动同步，无变更时不产生网络请求
         </p>
 

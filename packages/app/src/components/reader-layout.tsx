@@ -7,8 +7,7 @@ import WindowControls from "@/components/window-controls";
 import { useFontEvents } from "@/hooks/use-font-events";
 import ReaderViewer from "@/pages/reader";
 import { ReaderProvider } from "@/pages/reader/components/reader-provider";
-import { msSinceUserNavigation } from "@/pages/reader/hooks/navigation-tracker";
-import { getBookStatus } from "@/services/book-service";
+import { applySyncResult } from "@/services/apply-sync-result";
 import {
   type SyncRunResult,
   syncBackupNow,
@@ -26,49 +25,6 @@ import { Tabs } from "app-tabs";
 import { HomeIcon } from "lucide-react";
 import { Resizable } from "re-resizable";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-
-/**
- * 同步落地：把远端进度应用到当前打开的书（防跳动保护——60 秒内用户刚翻过页则只提示不跳转）
- * 同时更新 reader store 缓存的 config.location：恢复位置的真实来源是它（initBook 时从 book_status 派生），
- * 不更新的话后续 saveBookConfig 会把陈旧位置回写、覆盖同步结果（"未打开的书下次打开仍从旧位置恢复"的根因）
- */
-async function applyProgressToOpenBooks(bookIds: string[]) {
-  if (bookIds.length === 0) return;
-
-  const { tabs, getReaderStore } = useLayoutStore.getState();
-  for (const tab of tabs) {
-    if (!bookIds.includes(tab.bookId)) continue;
-
-    const store = getReaderStore(tab.id);
-    if (!store) continue;
-
-    try {
-      const status = await getBookStatus(tab.bookId);
-      if (!status?.location) continue;
-
-      const state = store.getState();
-
-      // 更新缓存 config.location（其余字段不动；location 为空时跳过）
-      if (state.config && state.config.location !== status.location) {
-        state.setConfig({ ...state.config, location: status.location });
-      }
-
-      const view = state.view;
-      if (!view) continue;
-
-      const percent = status.progressTotal > 0 ? Math.round((status.progressCurrent / status.progressTotal) * 100) : 0;
-      if (msSinceUserNavigation(tab.bookId) < 60_000) {
-        toast.info(`另一台设备进度已到 ${percent}%，刷新后生效`);
-      } else {
-        view.goTo(status.location);
-        toast.info(`已同步另一台设备的进度（第 ${percent}%）`);
-      }
-    } catch (error) {
-      console.warn("应用远端进度失败:", error);
-    }
-  }
-}
 
 export default function ReaderLayout() {
   useFontEvents();
@@ -138,13 +94,10 @@ export default function ReaderLayout() {
     let cancelled = false;
     let syncing = false;
     let lastPullAt = 0;
+    let onlineCleanup: (() => void) | null = null;
 
     const handleResult = (result: SyncRunResult) => {
-      if (result.thread_ids.length > 0) {
-        queryClient.invalidateQueries({ queryKey: ["threads"] });
-      }
-      // 拉到当前打开书的进度：跳转或提示（60 秒防跳动保护在 applyProgressToOpenBooks 内）
-      void applyProgressToOpenBooks(result.book_status_ids);
+      void applySyncResult(result, queryClient);
     };
 
     const runWith = (fn: () => Promise<SyncRunResult>) => {
@@ -190,6 +143,18 @@ export default function ReaderLayout() {
             })
             .catch((error) => console.warn("L2 水位检查失败:", error));
         }, 25_000);
+
+        // 网络恢复时立即一轮同步（dirty 推+拉，clean 轻量拉取）
+        const onOnline = () => {
+          syncHasUnpushed()
+            .then((dirty) => {
+              runWith(dirty ? syncRunNow : syncPullNow);
+              lastPullAt = Date.now();
+            })
+            .catch((error) => console.warn("L2 水位检查失败:", error));
+        };
+        window.addEventListener("online", onOnline);
+        onlineCleanup = () => window.removeEventListener("online", onOnline);
       } catch (error) {
         console.warn("L2 同步调度初始化失败:", error);
       }
@@ -199,6 +164,7 @@ export default function ReaderLayout() {
     return () => {
       cancelled = true;
       if (timer) clearInterval(timer);
+      onlineCleanup?.();
     };
   }, []);
 

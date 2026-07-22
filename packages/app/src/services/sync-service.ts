@@ -9,7 +9,7 @@ export interface WebdavConfig {
   auto_backup: string;
   /** L2 增量同步开关 */
   l2_enabled: boolean;
-  /** off / 1min / 5min / 30min */
+  /** off / 30s / 5min / 30min */
   sync_frequency: string;
 }
 
@@ -102,6 +102,10 @@ export interface SyncRunResult {
   book_status_ids: string[];
   /** 本轮拉取应用了变更的 threads 对话 id */
   thread_ids: string[];
+  /** books 表有变更（书架需刷新） */
+  books_changed: boolean;
+  /** notes/book_notes 表有变更（划线/笔记需刷新） */
+  notes_changed: boolean;
 }
 
 export async function syncGetL2Status(): Promise<L2Status> {

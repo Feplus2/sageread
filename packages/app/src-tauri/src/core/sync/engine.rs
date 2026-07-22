@@ -25,14 +25,20 @@ pub struct SyncRunResult {
     pub book_status_ids: Vec<String>,
     /// 本轮拉取应用了变更的 threads 对话 id（供前端失效对话缓存）
     pub thread_ids: Vec<String>,
+    /// 本轮拉取 books 表有实际变更（供前端刷新书架）
+    pub books_changed: bool,
+    /// 本轮拉取 notes / book_notes 表有实际变更（供前端刷新划线笔记）
+    pub notes_changed: bool,
 }
 
-/// 单包应用结果：条数 + 分表变更 id
+/// 单包应用结果：条数 + 分表变更 id + 书架/笔记变更信号
 #[derive(Debug, Default)]
 pub struct ApplyOutcome {
     pub count: usize,
     pub book_status_ids: Vec<String>,
     pub thread_ids: Vec<String>,
+    pub books_changed: bool,
+    pub notes_changed: bool,
 }
 
 /// 设备指针文件 devices/<device_id>.json（各写各的，互不打架）
@@ -142,7 +148,8 @@ async fn read_devices_index(config: &WebdavConfig) -> Result<HashMap<String, Dev
 }
 
 async fn upsert_devices_index(config: &WebdavConfig, device_id: &str, latest_seq: i64) -> Result<(), String> {
-    let mut index = read_devices_index(config).await.unwrap_or_default();
+    // 索引不存在（404）才当空表；读取/解析失败直接 Err，禁止盲写覆盖云端其他设备条目
+    let mut index = read_devices_index(config).await?;
     index.insert(
         device_id.to_string(),
         DeviceIndexEntry {
@@ -552,6 +559,8 @@ pub async fn apply_changeset(pool: &SqlitePool, bytes: &[u8]) -> Result<ApplyOut
         match table.as_str() {
             "book_status" => outcome.book_status_ids.push(id.clone()),
             "threads" => outcome.thread_ids.push(id.clone()),
+            "books" => outcome.books_changed = true,
+            "notes" | "book_notes" => outcome.notes_changed = true,
             _ => {}
         }
     }
@@ -715,6 +724,8 @@ async fn pull_from_devices(
                     outcome.count += applied.count;
                     outcome.book_status_ids.extend(applied.book_status_ids);
                     outcome.thread_ids.extend(applied.thread_ids);
+                    outcome.books_changed |= applied.books_changed;
+                    outcome.notes_changed |= applied.notes_changed;
                     state.set_last_pulled(remote_id, cs.seq_end);
                     watermark_changed = true;
                 }
@@ -829,6 +840,8 @@ pub async fn run_sync(app: &AppHandle, pool: &SqlitePool, config: &WebdavConfig)
         pulled_rows: pulled.count,
         book_status_ids: pulled.book_status_ids,
         thread_ids: pulled.thread_ids,
+        books_changed: pulled.books_changed,
+        notes_changed: pulled.notes_changed,
     })
 }
 
@@ -861,6 +874,8 @@ pub async fn run_pull_only(app: &AppHandle, pool: &SqlitePool, config: &WebdavCo
         pulled_rows: pulled.count,
         book_status_ids: pulled.book_status_ids,
         thread_ids: pulled.thread_ids,
+        books_changed: pulled.books_changed,
+        notes_changed: pulled.notes_changed,
     })
 }
 
@@ -937,7 +952,47 @@ mod tests {
         .await
         .unwrap();
 
-        for (table, pk) in [("threads", "id"), ("notes", "id"), ("book_status", "book_id")] {
+        sqlx::query(
+            "CREATE TABLE books (
+                id TEXT PRIMARY KEY NOT NULL,
+                title TEXT,
+                author TEXT,
+                format TEXT,
+                file_path TEXT,
+                cover_path TEXT,
+                file_size INTEGER,
+                language TEXT,
+                tags TEXT,
+                trashed_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE book_notes (
+                id TEXT PRIMARY KEY NOT NULL,
+                book_id TEXT,
+                type TEXT,
+                cfi TEXT,
+                text TEXT,
+                style TEXT,
+                color TEXT,
+                note TEXT,
+                context_before TEXT,
+                context_after TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for (table, pk) in [("threads", "id"), ("notes", "id"), ("book_status", "book_id"), ("books", "id"), ("book_notes", "id")] {
             for (suffix, op, key) in [
                 ("ai", "INSERT", format!("NEW.{pk}")),
                 ("au", "UPDATE", format!("NEW.{pk}")),
@@ -1231,6 +1286,77 @@ mod tests {
             .unwrap();
         assert_eq!(applied2.count, 0);
         assert_eq!(status_location(&pool, "b1").await.as_deref(), Some("cfi-remote"));
+    }
+
+    /// books / notes / book_notes 实际变更时置对应信号；无实际变更（重放幂等）时不置
+    #[tokio::test]
+    async fn test_books_notes_changed_flags() {
+        let pool = setup_pool().await;
+
+        // notes 实际变更 → notes_changed=true，books_changed=false
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[note_row("n1", "远端", 2000)]))
+            .await
+            .unwrap();
+        assert!(outcome.notes_changed);
+        assert!(!outcome.books_changed);
+
+        // 重放无实际变更 → 两个信号都为 false
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[note_row("n1", "远端", 2000)]))
+            .await
+            .unwrap();
+        assert_eq!(outcome.count, 0);
+        assert!(!outcome.notes_changed);
+        assert!(!outcome.books_changed);
+
+        // books 实际变更 → books_changed=true，notes_changed=false
+        let book = ChangeRow {
+            table: "books".to_string(),
+            id: "b1".to_string(),
+            op: "UPDATE".to_string(),
+            updated_at: 2000,
+            data: Some(serde_json::json!({
+                "id": "b1",
+                "title": "书",
+                "author": null,
+                "format": "epub",
+                "file_path": "/x.epub",
+                "cover_path": null,
+                "file_size": 1,
+                "language": null,
+                "tags": null,
+                "trashed_at": null,
+                "created_at": 1000,
+                "updated_at": 2000,
+            })),
+        };
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[book])).await.unwrap();
+        assert!(outcome.books_changed);
+        assert!(!outcome.notes_changed);
+
+        // book_notes 实际变更 → notes_changed=true
+        let book_note = ChangeRow {
+            table: "book_notes".to_string(),
+            id: "bn1".to_string(),
+            op: "UPDATE".to_string(),
+            updated_at: 2000,
+            data: Some(serde_json::json!({
+                "id": "bn1",
+                "book_id": "b1",
+                "type": "highlight",
+                "cfi": "epubcfi(/6/2)",
+                "text": "划线",
+                "style": null,
+                "color": "yellow",
+                "note": null,
+                "context_before": null,
+                "context_after": null,
+                "created_at": 1000,
+                "updated_at": 2000,
+            })),
+        };
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[book_note])).await.unwrap();
+        assert!(outcome.notes_changed);
+        assert!(!outcome.books_changed);
     }
 
     #[tokio::test]

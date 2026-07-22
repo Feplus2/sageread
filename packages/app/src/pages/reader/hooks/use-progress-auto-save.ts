@@ -2,7 +2,7 @@ import { getBookStatus, updateBookStatus } from "@/services/book-service";
 import { throttle } from "@/utils/throttle";
 import { useCallback, useEffect, useRef } from "react";
 import { useReaderStore } from "../components/reader-provider";
-import { markUserNavigation } from "./navigation-tracker";
+import { isProgrammaticNavigation, markUserNavigation } from "./navigation-tracker";
 
 // 活跃判定与 reading session 同规则：20s 无活动 / 失焦 / 窗口隐藏即暂停
 const INACTIVITY_PAUSE_MS = 20 * 1000;
@@ -19,10 +19,14 @@ export const useProgressAutoSave = (bookId: string) => {
   const activeRef = useRef(true);
 
   // 位置变化 = 用户翻页活动（供同步落地的防跳动保护判定）
+  // 开书首次定位与程序化跳转（同步 goTo）不算用户翻页，否则会污染防跳动保护
   useEffect(() => {
     if (location && location !== prevNavigationLocationRef.current) {
+      const isFirstLocation = prevNavigationLocationRef.current === null;
       prevNavigationLocationRef.current = location;
-      markUserNavigation(bookId);
+      if (!isFirstLocation && !isProgrammaticNavigation(bookId)) {
+        markUserNavigation(bookId);
+      }
     }
   }, [location, bookId]);
 

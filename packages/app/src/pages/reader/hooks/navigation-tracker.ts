@@ -14,3 +14,18 @@ export function msSinceUserNavigation(bookId: string): number {
   const at = lastNavigationAt.get(bookId);
   return at === undefined ? Number.POSITIVE_INFINITY : Date.now() - at;
 }
+
+/** 程序化跳转（同步落地 goTo）时间戳：该时间窗内的位置变化不算用户翻页 */
+const programmaticNavigationAt = new Map<string, number>();
+const PROGRAMMATIC_WINDOW_MS = 2_000;
+
+/** 标记一次程序化跳转（goTo 前调用） */
+export function markProgrammaticNavigation(bookId: string): void {
+  programmaticNavigationAt.set(bookId, Date.now());
+}
+
+/** 当前是否处于程序化跳转时间窗内 */
+export function isProgrammaticNavigation(bookId: string): boolean {
+  const at = programmaticNavigationAt.get(bookId);
+  return at !== undefined && Date.now() - at < PROGRAMMATIC_WINDOW_MS;
+}

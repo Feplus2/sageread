@@ -5,8 +5,7 @@ import { exportMessagesToHtml } from "@/lib/export-thread-html";
 import { exportMessagesToImage } from "@/lib/export-thread-image";
 import { exportMessagesToMarkdown } from "@/lib/export-thread-markdown";
 import { useReaderStore } from "@/pages/reader/components/reader-provider";
-import { msSinceUserNavigation } from "@/pages/reader/hooks/navigation-tracker";
-import { getBookStatus } from "@/services/book-service";
+import { applySyncResult } from "@/services/apply-sync-result";
 import { syncRunNow } from "@/services/sync-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useThemeStore } from "@/store/theme-store";
@@ -25,6 +24,7 @@ import {
   UserSearch,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { ChatContainerRoot } from "../prompt-kit/chat-container";
 import { ScrollButton } from "../prompt-kit/scroll-button";
 import { MindmapDialog } from "../tools/mindmap-dialog";
@@ -54,23 +54,8 @@ function ChatContent({ bookId }: ChatContentProps) {
     try {
       const result = await syncRunNow();
       toast.success("同步完成", { description: result.message });
-      queryClient.invalidateQueries({ queryKey: ["threads"] });
-
-      // 当前打开的书进度被远端更新：刷新阅读位置（60 秒内用户翻过页则只提示不跳转）
-      if (bookId && result.book_status_ids.includes(bookId)) {
-        const status = await getBookStatus(bookId);
-        const view = useReaderStore.getState().view;
-        if (status?.location && view) {
-          const percent =
-            status.progressTotal > 0 ? Math.round((status.progressCurrent / status.progressTotal) * 100) : 0;
-          if (msSinceUserNavigation(bookId) < 60_000) {
-            toast.info(`另一台设备进度已到 ${percent}%，刷新后生效`);
-          } else {
-            view.goTo(status.location);
-            toast.info(`已同步另一台设备的进度（第 ${percent}%）`);
-          }
-        }
-      }
+      // 进度落地/缓存刷新统一走共享函数（含 config.location 缓存更新与 60s 防跳动）
+      await applySyncResult(result, queryClient);
     } catch (error) {
       console.error("同步失败:", error);
       toast.error("同步失败", { description: String(error) });

@@ -56,6 +56,17 @@ pub fn build_backup_zip(entries: &[(String, Vec<u8>)], manifest: &BackupManifest
     Ok(cursor.into_inner())
 }
 
+/// 备份成功后的状态更新：只动四个备份字段，保留 device_id / 推送拉取水位等 L2 状态
+fn backup_success_state(state: SyncState, created_at: i64, backup_name: String, db_sha256: String) -> SyncState {
+    SyncState {
+        last_backup_at: Some(created_at),
+        last_backup_name: Some(backup_name),
+        last_db_sha256: Some(db_sha256),
+        last_result: Some("uploaded".to_string()),
+        ..state
+    }
+}
+
 /// 执行一次备份：VACUUM INTO 快照 → 打包 → 无变化跳过 → 上传 → 更新 index.json → 轮转
 pub async fn run_backup(
     app: &AppHandle,
@@ -150,13 +161,7 @@ pub async fn run_backup(
     // 6. 记录本地状态
     let _ = write_sync_state(
         &config_dir,
-        &SyncState {
-            last_backup_at: Some(created_at),
-            last_backup_name: Some(backup_name.clone()),
-            last_db_sha256: Some(manifest.db_sha256.clone()),
-            last_result: Some("uploaded".to_string()),
-            ..Default::default()
-        },
+        &backup_success_state(state, created_at, backup_name.clone(), manifest.db_sha256.clone()),
     );
 
     Ok(BackupOutcome {
@@ -169,6 +174,33 @@ pub async fn run_backup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回归：备份成功后写状态不得重置 L2 字段（device_id / 推送拉取水位）
+    #[test]
+    fn test_backup_success_state_preserves_l2() {
+        let mut pulled = std::collections::HashMap::new();
+        pulled.insert("dev-b".to_string(), 42);
+        let old = SyncState {
+            device_id: Some("dev-a".to_string()),
+            last_pushed_seq: Some(100),
+            last_pulled: Some(pulled),
+            last_l2_sync_at: Some(999),
+            last_l2_result: Some("无新变更".to_string()),
+            ..Default::default()
+        };
+
+        let new = backup_success_state(old, 123, "backup-1.zip".to_string(), "abc".to_string());
+
+        assert_eq!(new.device_id.as_deref(), Some("dev-a"));
+        assert_eq!(new.last_pushed_seq, Some(100));
+        assert_eq!(new.last_pulled.as_ref().and_then(|m| m.get("dev-b")), Some(&42));
+        assert_eq!(new.last_l2_sync_at, Some(999));
+        assert_eq!(new.last_l2_result.as_deref(), Some("无新变更"));
+        assert_eq!(new.last_backup_at, Some(123));
+        assert_eq!(new.last_backup_name.as_deref(), Some("backup-1.zip"));
+        assert_eq!(new.last_db_sha256.as_deref(), Some("abc"));
+        assert_eq!(new.last_result.as_deref(), Some("uploaded"));
+    }
 
     /// 验证打包流程：VACUUM INTO 快照可读、zip 结构完整、manifest 可解析
     #[tokio::test]

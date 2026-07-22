@@ -26,7 +26,6 @@ struct ChangesetHeader {
 }
 
 pub struct PackedChangeset {
-    pub seq_from: i64,
     pub seq_to: i64,
     pub jsonl: String,
     pub row_count: usize,
@@ -183,7 +182,6 @@ pub async fn pack_changes(
     }
 
     Ok(Some(PackedChangeset {
-        seq_from,
         seq_to,
         jsonl,
         row_count,

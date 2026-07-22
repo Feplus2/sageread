@@ -149,27 +149,6 @@ pub async fn get_path(config: &WebdavConfig, path: &str) -> Result<Option<Vec<u8
     Ok(Some(bytes.to_vec()))
 }
 
-/// WebDAV MOVE（先写临时名再改名，避免半截文件被拉走）
-pub async fn move_path(config: &WebdavConfig, from: &str, to: &str) -> Result<(), String> {
-    let from_url = remote_url(config, from)?;
-    let to_url = remote_url(config, to)?;
-    let client = Client::new();
-    let resp = client
-        .request(Method::from_bytes(b"MOVE").unwrap(), from_url)
-        .basic_auth(&config.username, Some(&config.password))
-        .header("Destination", to_url.as_str())
-        .header("Overwrite", "T")
-        .send()
-        .await
-        .map_err(|e| format!("网络请求失败: {e}"))?;
-    let status = resp.status().as_u16();
-    // 201=已创建 204=已覆盖
-    if !(200..300).contains(&status) {
-        return Err(format!("改名失败 (HTTP {status}): {from} -> {to}"));
-    }
-    Ok(())
-}
-
 pub async fn delete_path(config: &WebdavConfig, path: &str) -> Result<(), String> {
     let resp = send(config, Method::DELETE, path, None).await?;
     let status = resp.status().as_u16();

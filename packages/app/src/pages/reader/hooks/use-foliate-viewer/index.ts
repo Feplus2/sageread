@@ -1,6 +1,6 @@
 import { useUICSS } from "@/hooks/use-ui-css";
 import type { BookDoc } from "@/lib/document";
-import { saveBookConfig } from "@/services/app-service";
+import { applySyncResult } from "@/services/apply-sync-result";
 import { getBookStatus } from "@/services/book-service";
 import { syncGetConfig, syncPullNow } from "@/services/sync-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
@@ -60,19 +60,21 @@ export const useFoliateViewer = (bookId: string, bookDoc: BookDoc, config: BookC
           ]);
 
           if (pullResult?.book_status_ids?.includes(bookId)) {
-            // 远端进度更新：以远端位置打开（写入 BookConfig 供 foliate init 使用）
+            // 远端进度更新：以远端位置打开（只写内存 config 供 foliate init 使用；
+            // 不落库——config 里的 progress/lastReadAt 是拉取前的旧值，回写会覆盖远端刚应用的行，
+            // 由后续正常进度保存落库）
             const status = await getBookStatus(bookId);
             if (status?.location) {
               config.location = status.location;
-              await saveBookConfig(bookId, config);
               const percent =
                 status.progressTotal > 0 ? Math.round((status.progressCurrent / status.progressTotal) * 100) : 0;
               toast.info(`已同步另一台设备的进度（第 ${percent}%）`);
             }
           }
 
-          if (pullResult && pullResult.thread_ids.length > 0) {
-            queryClient.invalidateQueries({ queryKey: ["threads"] });
+          if (pullResult) {
+            // 缓存刷新统一走共享函数（threads/划线/笔记/书架；此处 view 尚未创建，进度跳转由上面开书位置兜底）
+            await applySyncResult(pullResult, queryClient);
           }
         }
       } catch (error) {
