@@ -1,4 +1,4 @@
--- 注意：threads.starred 列由 database.rs 的 fork 专属迁移添加，勿在此定义（避免与 ALTER 重复）
+-- 注意：threads.starred、books.trashed_at 列由 database.rs 的 fork 专属迁移添加，勿在此定义（避免与 ALTER 重复）
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY NOT NULL,
     book_id TEXT,

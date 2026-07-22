@@ -15,6 +15,8 @@ pub struct SimpleBook {
     pub file_size: i64,
     pub language: String,
     pub tags: Option<Vec<String>>,
+    #[serde(rename = "trashedAt")]
+    pub trashed_at: Option<i64>,
     #[serde(rename = "createdAt")]
     pub created_at: i64,
     #[serde(rename = "updatedAt")]
@@ -128,6 +130,7 @@ impl SimpleBook {
             file_size,
             language,
             tags: None,
+            trashed_at: None,
             created_at: now,
             updated_at: now,
         }
@@ -149,6 +152,7 @@ impl SimpleBook {
             file_size: row.try_get("file_size")?,
             language: row.try_get("language")?,
             tags,
+            trashed_at: row.try_get("trashed_at")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
         })

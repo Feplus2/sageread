@@ -3,6 +3,7 @@ import { useBookUpload } from "@/hooks/use-book-upload";
 import { useSafeAreaInsets } from "@/hooks/use-safe-areaInsets";
 import ChatPage from "@/pages/chat";
 import LibraryPage from "@/pages/library";
+import TrashPage from "@/pages/library/trash";
 import SkillsPage from "@/pages/skills";
 import StatisticsPage from "@/pages/statistics";
 import { useAppSettingsStore } from "@/store/app-settings-store";
@@ -113,6 +114,14 @@ const HomeLayout = () => {
               element={
                 <div className="flex h-full flex-1 flex-col overflow-hidden rounded-xl shadow-around">
                   <ChatPage />
+                </div>
+              }
+            />
+            <Route
+              path="/trash"
+              element={
+                <div className="flex h-full flex-1 flex-col rounded-xl border bg-background shadow-around">
+                  <TrashPage />
                 </div>
               }
             />

@@ -11,6 +11,9 @@ export interface SimpleBook {
 
   tags?: string[];
 
+  /** 回收站软删除时间戳（毫秒），null/undefined = 未删除 */
+  trashedAt?: number | null;
+
   createdAt: number;
   updatedAt: number;
 }

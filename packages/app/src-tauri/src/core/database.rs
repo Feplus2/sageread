@@ -66,6 +66,17 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Err
         Err(e) => return Err(e.into()),
     }
 
+    // books.trashed_at（回收站软删除时间戳，毫秒，可空）
+    let result = sqlx::query("ALTER TABLE books ADD COLUMN trashed_at INTEGER")
+        .execute(pool)
+        .await;
+
+    match result {
+        Ok(_) => println!("Migration applied: books.trashed_at added."),
+        Err(e) if e.to_string().contains("duplicate column name") => {}
+        Err(e) => return Err(e.into()),
+    }
+
     Ok(())
 }
 

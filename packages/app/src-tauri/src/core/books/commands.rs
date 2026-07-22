@@ -117,7 +117,7 @@ pub async fn get_books(
     let opts = options.unwrap_or_default();
 
     let mut query = String::from("SELECT * FROM books");
-    let mut conditions = Vec::new();
+    let mut conditions = vec!["trashed_at IS NULL".to_string()];
 
     if let Some(search_query) = &opts.search_query {
         if !search_query.trim().is_empty() {
@@ -251,28 +251,108 @@ pub async fn update_book(
 pub async fn delete_book(app_handle: AppHandle, id: String) -> Result<(), String> {
     let db_pool = get_db_pool(&app_handle).await?;
 
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("获取应用目录失败: {}", e))?;
-
-    let book_dir = app_data_dir.join("books").join(&id);
-    if book_dir.exists() {
-        std::fs::remove_dir_all(&book_dir).map_err(|e| format!("删除书籍文件失败: {}", e))?;
-    }
-
-    // 外键约束会自动删除相关的 book_status, reading_sessions 和 threads
-    let result = sqlx::query("DELETE FROM books WHERE id = ?")
+    // 软删除：仅标记 trashed_at，磁盘文件与关联数据（book_status/threads 等）全部保留，回收站可恢复
+    let result = sqlx::query("UPDATE books SET trashed_at = ? WHERE id = ? AND trashed_at IS NULL")
+        .bind(chrono::Utc::now().timestamp_millis())
         .bind(&id)
         .execute(&db_pool)
         .await
         .map_err(|e| format!("删除书籍失败: {}", e))?;
 
     if result.rows_affected() == 0 {
+        return Err("书籍不存在或已在回收站".to_string());
+    }
+
+    Ok(())
+}
+
+/// 恢复：清除 trashed_at，书籍回到书架
+#[tauri::command]
+pub async fn restore_book(app_handle: AppHandle, id: String) -> Result<(), String> {
+    let db_pool = get_db_pool(&app_handle).await?;
+
+    let result = sqlx::query("UPDATE books SET trashed_at = NULL, updated_at = ? WHERE id = ?")
+        .bind(chrono::Utc::now().timestamp_millis())
+        .bind(&id)
+        .execute(&db_pool)
+        .await
+        .map_err(|e| format!("恢复书籍失败: {}", e))?;
+
+    if result.rows_affected() == 0 {
         return Err("书籍不存在".to_string());
     }
 
     Ok(())
+}
+
+/// 回收站列表：按删除时间倒序
+#[tauri::command]
+pub async fn get_trashed_books(app_handle: AppHandle) -> Result<Vec<SimpleBook>, String> {
+    let db_pool = get_db_pool(&app_handle).await?;
+
+    let rows = sqlx::query("SELECT * FROM books WHERE trashed_at IS NOT NULL ORDER BY trashed_at DESC")
+        .fetch_all(&db_pool)
+        .await
+        .map_err(|e| format!("查询回收站失败: {}", e))?;
+
+    let books: Result<Vec<SimpleBook>, sqlx::Error> = rows.iter().map(SimpleBook::from_db_row).collect();
+    books.map_err(|e| format!("转换查询结果失败: {}", e))
+}
+
+/// 彻底删除（回收站操作/自动清理共用）：删磁盘目录 + DELETE 行（外键级联清关联数据）
+async fn purge_book_by_id(app_handle: &AppHandle, db_pool: &SqlitePool, id: &str) -> Result<(), String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取应用目录失败: {}", e))?;
+
+    let book_dir = app_data_dir.join("books").join(id);
+    if book_dir.exists() {
+        std::fs::remove_dir_all(&book_dir).map_err(|e| format!("删除书籍文件失败: {}", e))?;
+    }
+
+    sqlx::query("DELETE FROM books WHERE id = ?")
+        .bind(id)
+        .execute(db_pool)
+        .await
+        .map_err(|e| format!("彻底删除书籍失败: {}", e))?;
+
+    Ok(())
+}
+
+/// 彻底删除单本书（回收站手动操作）
+#[tauri::command]
+pub async fn purge_book(app_handle: AppHandle, id: String) -> Result<(), String> {
+    let db_pool = get_db_pool(&app_handle).await?;
+    purge_book_by_id(&app_handle, &db_pool, &id).await
+}
+
+/// 回收站保留天数（将来可做成用户配置）
+const TRASH_RETENTION_DAYS: i64 = 30;
+
+/// 启动时自动清理：超过保留期的回收站书籍执行彻底删除，返回清理数量
+pub async fn purge_expired_trash(app_handle: &AppHandle) -> Result<usize, String> {
+    let db_pool = get_db_pool(app_handle).await?;
+
+    let cutoff = chrono::Utc::now().timestamp_millis() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    let rows = sqlx::query("SELECT id FROM books WHERE trashed_at IS NOT NULL AND trashed_at < ?")
+        .bind(cutoff)
+        .fetch_all(&db_pool)
+        .await
+        .map_err(|e| format!("查询过期回收站书籍失败: {}", e))?;
+
+    let mut purged = 0;
+    for row in rows {
+        let id: String = row.get("id");
+        purge_book_by_id(app_handle, &db_pool, &id).await?;
+        purged += 1;
+    }
+
+    if purged > 0 {
+        log::info!("回收站自动清理：彻底删除 {} 本超过 {} 天的书籍", purged, TRASH_RETENTION_DAYS);
+    }
+
+    Ok(purged)
 }
 
 #[tauri::command]
@@ -371,11 +451,11 @@ pub async fn get_books_with_status(
          s.completed_at, s.metadata, s.created_at as status_created_at, s.updated_at as status_updated_at 
          FROM books b LEFT JOIN book_status s ON b.id = s.book_id"
     );
-    let mut conditions = Vec::new();
+    let mut conditions = vec!["b.trashed_at IS NULL".to_string()];
 
     if let Some(search_query) = &opts.search_query {
         if !search_query.trim().is_empty() {
-            conditions.push("(b.title LIKE ? OR b.author LIKE ?)");
+            conditions.push("(b.title LIKE ? OR b.author LIKE ?)".to_string());
         }
     }
 
@@ -391,7 +471,7 @@ pub async fn get_books_with_status(
         None
     };
 
-    if let Some(ref condition) = tag_condition {
+    if let Some(condition) = tag_condition {
         conditions.push(condition);
     }
 

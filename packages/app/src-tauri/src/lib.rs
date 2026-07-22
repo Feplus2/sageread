@@ -17,6 +17,9 @@ use crate::core::{
         get_books_with_status,
         get_reading_session,
         get_reading_sessions_by_book,
+        get_trashed_books,
+        purge_book,
+        restore_book,
         save_book,
         update_book,
         update_book_note,
@@ -120,6 +123,12 @@ pub fn run() {
                 let state = app_handle.state::<AppState>();
                 let mut db_pool_guard = state.db_pool.lock().await;
                 *db_pool_guard = Some(pool);
+
+                // 启动时清理回收站：超过保留期的书籍彻底删除
+                drop(db_pool_guard);
+                if let Err(e) = core::books::commands::purge_expired_trash(&app_handle).await {
+                    log::error!("回收站自动清理失败: {}", e);
+                }
             });
             Ok(())
         })
@@ -136,6 +145,9 @@ pub fn run() {
             get_book_by_id,
             update_book,
             delete_book,
+            restore_book,
+            get_trashed_books,
+            purge_book,
             get_book_status,
             update_book_status,
             get_books_with_status,

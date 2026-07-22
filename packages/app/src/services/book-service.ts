@@ -182,6 +182,37 @@ export async function deleteBook(id: string): Promise<void> {
   }
 }
 
+/** 从回收站恢复书籍 */
+export async function restoreBook(id: string): Promise<void> {
+  try {
+    await invoke("restore_book", { id });
+  } catch (error) {
+    console.error("恢复书籍失败:", error);
+    throw new Error(`恢复书籍失败: ${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 回收站列表（按删除时间倒序） */
+export async function getTrashedBooks(): Promise<SimpleBook[]> {
+  try {
+    const result = await invoke<SimpleBook[]>("get_trashed_books");
+    return result;
+  } catch (error) {
+    console.error("获取回收站失败:", error);
+    throw new Error(`获取回收站失败: ${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 彻底删除（删磁盘文件与全部关联数据，不可恢复） */
+export async function purgeBook(id: string): Promise<void> {
+  try {
+    await invoke("purge_book", { id });
+  } catch (error) {
+    console.error("彻底删除书籍失败:", error);
+    throw new Error(`彻底删除书籍失败: ${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
 export async function searchBooks(
   query: string,
   options: Omit<BookQueryOptions, "searchQuery"> = {},

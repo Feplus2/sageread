@@ -6,10 +6,11 @@ import { useBooksOperations } from "@/pages/library/hooks/use-books-operations";
 import { useLibraryUI } from "@/pages/library/hooks/use-library-ui";
 import { useTagsManagement } from "@/pages/library/hooks/use-tags-management";
 import { useTagsOperations } from "@/pages/library/hooks/use-tags-operations";
+import { getTrashedBooks } from "@/services/book-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useLibraryStore } from "@/store/library-store";
 import clsx from "clsx";
-import { BarChart3, Brain, ChevronDown, ChevronRight, Library, Lightbulb, Settings } from "lucide-react";
+import { BarChart3, Brain, ChevronDown, ChevronRight, Library, Lightbulb, Settings, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
@@ -38,7 +39,16 @@ export default function Sidebar() {
   const { handleBookUpdate } = useBooksOperations(refreshBooks);
 
   const [selectedTagsForDelete, setSelectedTagsForDelete] = useState<string[]>([]);
+  const [trashCount, setTrashCount] = useState(0);
   const sidebarRef = useRef<HTMLElement>(null);
+
+  // 回收站计数徽标（路由变化时刷新）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅作刷新触发，effect 内不直接引用
+  useEffect(() => {
+    getTrashedBooks()
+      .then((books) => setTrashCount(books.length))
+      .catch(() => setTrashCount(0));
+  }, [location.pathname]);
 
   const clearSelectedTags = useCallback(() => {
     setSelectedTagsForDelete([]);
@@ -216,6 +226,23 @@ export default function Sidebar() {
           })}
         </nav>
         <div className="space-y-1 px-2 py-3">
+          <Link
+            to="/trash"
+            className={clsx(
+              "flex w-full items-center gap-2 rounded-md p-1 py-1 text-left text-sm transition-colors hover:bg-border",
+              location.pathname === "/trash"
+                ? "text-neutral-900 dark:text-neutral-100"
+                : "text-neutral-600 dark:text-neutral-300",
+            )}
+          >
+            <Trash2 size={16} className="flex-shrink-0" />
+            <span className="text-sm">回收站</span>
+            {trashCount > 0 && (
+              <span className="ml-auto rounded-full bg-neutral-200 px-1.5 text-neutral-600 text-xs dark:bg-neutral-700 dark:text-neutral-300">
+                {trashCount}
+              </span>
+            )}
+          </Link>
           {actionButtons.map((button, index) => {
             const Icon = button.icon;
 
