@@ -111,6 +111,8 @@ feat/xxx  (PR 时才创建：从 main 开出，cherry-pick local 上的对应提
 
 **流程备忘**（无 gh CLI，全网页操作）：GitHub 网页 fork xincmm/sageread → `git remote add origin <fork地址>` → `git push -u origin feat/chat-thread-features` → 网页点 "Compare & pull request"（base: xincmm/sageread 的 main）。**不要 push `local`**（含本地专属提交）。
 
+> 2026-07-22 实录：PR 1 已提（xincmm/sageread#44，fork = Feplus2/sageread，fork/push/开 PR 均由 API 完成）。**坑：GitHub 邮箱隐私保护会拒绝推送**——解法是把 feat 分支提交邮箱重写为 noreply 后再推：`git checkout feat/xxx && git -c user.name="Feplus2" -c user.email="202785243+Feplus2@users.noreply.github.com" rebase main --exec "git commit --amend --no-edit --reset-author"`。后续每个 PR 分支都要做这一步（或去 GitHub Settings → Emails 关掉 Block 选项）。
+
 ## 开发环境速查
 
 ```bash
