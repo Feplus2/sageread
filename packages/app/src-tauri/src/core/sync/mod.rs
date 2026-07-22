@@ -1,5 +1,9 @@
 pub mod backup;
+pub mod changelog;
 pub mod commands;
+pub mod engine;
+pub mod merge;
 pub mod models;
 pub mod restore;
+pub mod tables;
 pub mod webdav;

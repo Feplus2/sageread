@@ -31,7 +31,7 @@ pub fn read_sync_state(config_dir: &Path) -> SyncState {
         .unwrap_or_default()
 }
 
-fn write_sync_state(config_dir: &Path, state: &SyncState) -> Result<(), String> {
+pub fn write_sync_state(config_dir: &Path, state: &SyncState) -> Result<(), String> {
     let content = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
     fs::write(config_dir.join("sync-state.json"), content).map_err(|e| e.to_string())
 }
@@ -155,6 +155,7 @@ pub async fn run_backup(
             last_backup_name: Some(backup_name.clone()),
             last_db_sha256: Some(manifest.db_sha256.clone()),
             last_result: Some("uploaded".to_string()),
+            ..Default::default()
         },
     );
 

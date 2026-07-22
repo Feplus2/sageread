@@ -7,15 +7,68 @@ import WindowControls from "@/components/window-controls";
 import { useFontEvents } from "@/hooks/use-font-events";
 import ReaderViewer from "@/pages/reader";
 import { ReaderProvider } from "@/pages/reader/components/reader-provider";
-import { syncBackupNow, syncGetConfig } from "@/services/sync-service";
+import { msSinceUserNavigation } from "@/pages/reader/hooks/navigation-tracker";
+import { getBookStatus } from "@/services/book-service";
+import {
+  type SyncRunResult,
+  syncBackupNow,
+  syncGetConfig,
+  syncHasUnpushed,
+  syncPullNow,
+  syncRunNow,
+} from "@/services/sync-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useLayoutStore } from "@/store/layout-store";
 import { useThemeStore } from "@/store/theme-store";
 import { getOSPlatform } from "@/utils/misc";
+import { useQueryClient } from "@tanstack/react-query";
 import { Tabs } from "app-tabs";
 import { HomeIcon } from "lucide-react";
 import { Resizable } from "re-resizable";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+
+/**
+ * 同步落地：把远端进度应用到当前打开的书（防跳动保护——60 秒内用户刚翻过页则只提示不跳转）
+ * 同时更新 reader store 缓存的 config.location：恢复位置的真实来源是它（initBook 时从 book_status 派生），
+ * 不更新的话后续 saveBookConfig 会把陈旧位置回写、覆盖同步结果（"未打开的书下次打开仍从旧位置恢复"的根因）
+ */
+async function applyProgressToOpenBooks(bookIds: string[]) {
+  if (bookIds.length === 0) return;
+
+  const { tabs, getReaderStore } = useLayoutStore.getState();
+  for (const tab of tabs) {
+    if (!bookIds.includes(tab.bookId)) continue;
+
+    const store = getReaderStore(tab.id);
+    if (!store) continue;
+
+    try {
+      const status = await getBookStatus(tab.bookId);
+      if (!status?.location) continue;
+
+      const state = store.getState();
+
+      // 更新缓存 config.location（其余字段不动；location 为空时跳过）
+      if (state.config && state.config.location !== status.location) {
+        state.setConfig({ ...state.config, location: status.location });
+      }
+
+      const view = state.view;
+      if (!view) continue;
+
+      const percent = status.progressTotal > 0 ? Math.round((status.progressCurrent / status.progressTotal) * 100) : 0;
+      if (msSinceUserNavigation(tab.bookId) < 60_000) {
+        toast.info(`另一台设备进度已到 ${percent}%，刷新后生效`);
+      } else {
+        view.goTo(status.location);
+        toast.info(`已同步另一台设备的进度（第 ${percent}%）`);
+      }
+    } catch (error) {
+      console.warn("应用远端进度失败:", error);
+    }
+  }
+}
 
 export default function ReaderLayout() {
   useFontEvents();
@@ -33,6 +86,7 @@ export default function ReaderLayout() {
   } = useLayoutStore();
   const { isDarkMode, swapSidebars } = useThemeStore();
   const { isSettingsDialogOpen, toggleSettingsDialog } = useAppSettingsStore();
+  const queryClient = useQueryClient();
 
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [showOverlay, setShowOverlay] = useState(false);
@@ -64,6 +118,80 @@ export default function ReaderLayout() {
         }, intervalMs);
       } catch (error) {
         console.warn("自动备份初始化失败:", error);
+      }
+    };
+
+    setup();
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
+  // L2 增量同步调度（P1 修复）：
+  // 固定 25 秒基础 tick——dirty 立即完整同步（推+拉，不受频率下拉影响）；
+  // clean 时按 sync_frequency 兜底轻量拉取（syncPullNow：远端无新意时只有一个小 GET，无变更零下载）。
+  // 启动时自动一轮照旧。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: queryClient 实例稳定，定时器只需注册一次
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    let syncing = false;
+    let lastPullAt = 0;
+
+    const handleResult = (result: SyncRunResult) => {
+      if (result.thread_ids.length > 0) {
+        queryClient.invalidateQueries({ queryKey: ["threads"] });
+      }
+      // 拉到当前打开书的进度：跳转或提示（60 秒防跳动保护在 applyProgressToOpenBooks 内）
+      void applyProgressToOpenBooks(result.book_status_ids);
+    };
+
+    const runWith = (fn: () => Promise<SyncRunResult>) => {
+      if (syncing) return;
+      syncing = true;
+      fn()
+        .then(handleResult)
+        .catch((error) => console.warn("L2 同步失败:", error))
+        .finally(() => {
+          syncing = false;
+        });
+    };
+
+    const setup = async () => {
+      try {
+        const config = await syncGetConfig();
+        if (cancelled || !config || !config.l2_enabled || !config.endpoint) return;
+
+        // 启动自动一轮完整同步
+        runWith(syncRunNow);
+        lastPullAt = Date.now();
+
+        // clean 时的拉取兜底频率：下拉仅控制它（off = 不兜底，只能靠推送轮顺带拉取）
+        const pullFallbackMs =
+          config.sync_frequency === "30min"
+            ? 30 * 60_000
+            : config.sync_frequency === "5min"
+              ? 5 * 60_000
+              : config.sync_frequency === "off"
+                ? Number.POSITIVE_INFINITY
+                : 30_000;
+
+        timer = setInterval(() => {
+          syncHasUnpushed()
+            .then((dirty) => {
+              if (dirty) {
+                runWith(syncRunNow); // 有变更：立即推+拉
+                lastPullAt = Date.now();
+              } else if (Date.now() - lastPullAt >= pullFallbackMs) {
+                runWith(syncPullNow); // 无变更：按兜底频率轻量拉取
+                lastPullAt = Date.now();
+              }
+            })
+            .catch((error) => console.warn("L2 水位检查失败:", error));
+        }, 25_000);
+      } catch (error) {
+        console.warn("L2 同步调度初始化失败:", error);
       }
     };
 

@@ -57,6 +57,18 @@ pub async fn test_connection(config: &WebdavConfig) -> Result<String, String> {
     Ok("连接成功".to_string())
 }
 
+/// 按需确保多个远端目录存在（逐级 MKCOL，201/405 均视为成功）
+pub async fn ensure_remote_dirs(config: &WebdavConfig, dirs: &[String]) -> Result<(), String> {
+    for dir in dirs {
+        let resp = send(config, Method::from_bytes(b"MKCOL").unwrap(), dir, None).await?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) && status != 405 {
+            return Err(format!("创建同步目录失败 (HTTP {status}): {dir}"));
+        }
+    }
+    Ok(())
+}
+
 pub async fn put_file(config: &WebdavConfig, name: &str, bytes: Vec<u8>) -> Result<(), String> {
     let path = file_path(config, name);
     let resp = send(config, Method::PUT, &path, Some(bytes)).await?;
@@ -110,4 +122,59 @@ pub async fn write_index(config: &WebdavConfig, entries: &[BackupInfo]) -> Resul
     let bytes =
         serde_json::to_vec_pretty(entries).map_err(|e| format!("序列化 index.json 失败: {e}"))?;
     put_file(config, "index.json", bytes).await
+}
+
+/* ---------------- L2 增量同步：绝对远端路径操作（不经 remote_dir 前缀） ---------------- */
+
+pub async fn put_path(config: &WebdavConfig, path: &str, bytes: Vec<u8>) -> Result<(), String> {
+    let resp = send(config, Method::PUT, path, Some(bytes)).await?;
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(format!("上传失败 (HTTP {status}): {path}"));
+    }
+    Ok(())
+}
+
+/// 读取远端绝对路径文件；404 返回 None
+pub async fn get_path(config: &WebdavConfig, path: &str) -> Result<Option<Vec<u8>>, String> {
+    let resp = send(config, Method::GET, path, None).await?;
+    let status = resp.status().as_u16();
+    if status == 404 {
+        return Ok(None);
+    }
+    if !(200..300).contains(&status) {
+        return Err(format!("下载失败 (HTTP {status}): {path}"));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("读取响应失败: {e}"))?;
+    Ok(Some(bytes.to_vec()))
+}
+
+/// WebDAV MOVE（先写临时名再改名，避免半截文件被拉走）
+pub async fn move_path(config: &WebdavConfig, from: &str, to: &str) -> Result<(), String> {
+    let from_url = remote_url(config, from)?;
+    let to_url = remote_url(config, to)?;
+    let client = Client::new();
+    let resp = client
+        .request(Method::from_bytes(b"MOVE").unwrap(), from_url)
+        .basic_auth(&config.username, Some(&config.password))
+        .header("Destination", to_url.as_str())
+        .header("Overwrite", "T")
+        .send()
+        .await
+        .map_err(|e| format!("网络请求失败: {e}"))?;
+    let status = resp.status().as_u16();
+    // 201=已创建 204=已覆盖
+    if !(200..300).contains(&status) {
+        return Err(format!("改名失败 (HTTP {status}): {from} -> {to}"));
+    }
+    Ok(())
+}
+
+pub async fn delete_path(config: &WebdavConfig, path: &str) -> Result<(), String> {
+    let resp = send(config, Method::DELETE, path, None).await?;
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) && status != 404 {
+        return Err(format!("删除远端文件失败 (HTTP {status}): {path}"));
+    }
+    Ok(())
 }

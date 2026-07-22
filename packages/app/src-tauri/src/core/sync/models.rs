@@ -8,6 +8,10 @@ fn default_auto_backup() -> String {
     "off".to_string()
 }
 
+fn default_sync_frequency() -> String {
+    "30s".to_string()
+}
+
 /// WebDAV 连接配置（只存本地 webdav-config.json，不进备份包）
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WebdavConfig {
@@ -19,6 +23,12 @@ pub struct WebdavConfig {
     /// 自动备份频率：off / hourly / daily（前端 setInterval 实现）
     #[serde(default = "default_auto_backup")]
     pub auto_backup: String,
+    /// L2 增量同步开关
+    #[serde(default)]
+    pub l2_enabled: bool,
+    /// L2 同步频率：off / 1min / 5min / 30min
+    #[serde(default = "default_sync_frequency")]
+    pub sync_frequency: String,
 }
 
 /// 备份包内的清单文件（manifest.json）
@@ -51,6 +61,21 @@ pub struct SyncState {
     pub last_backup_name: Option<String>,
     pub last_db_sha256: Option<String>,
     pub last_result: Option<String>,
+
+    /* ---- L2 增量同步状态（协议 §3） ---- */
+    /// 设备身份：首次同步生成 UUID 持久化
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// 本地变更日志已推送到的序号
+    #[serde(default)]
+    pub last_pushed_seq: Option<i64>,
+    /// 每台远端设备已应用到本地的 changeset 序号
+    #[serde(default)]
+    pub last_pulled: Option<std::collections::HashMap<String, i64>>,
+    #[serde(default)]
+    pub last_l2_sync_at: Option<i64>,
+    #[serde(default)]
+    pub last_l2_result: Option<String>,
 }
 
 /// 备份执行结果（uploaded=已上传，skipped=无变化跳过）

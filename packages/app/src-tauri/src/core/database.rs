@@ -77,6 +77,75 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Err
         Err(e) => return Err(e.into()),
     }
 
+    // book_status.position_changed_at（真进度时间戳，同步合并用，回填 = last_read_at）
+    let result = sqlx::query("ALTER TABLE book_status ADD COLUMN position_changed_at INTEGER")
+        .execute(pool)
+        .await;
+
+    match result {
+        Ok(_) => println!("Migration applied: book_status.position_changed_at added."),
+        Err(e) if e.to_string().contains("duplicate column name") => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    // book_status.dwell_seconds（当前位置的累计活跃阅读秒数，位置变化时清零）
+    let result = sqlx::query("ALTER TABLE book_status ADD COLUMN dwell_seconds INTEGER DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    match result {
+        Ok(_) => println!("Migration applied: book_status.dwell_seconds added."),
+        Err(e) if e.to_string().contains("duplicate column name") => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    // 回填：已有进度的 position_changed_at 视为 last_read_at（幂等，只填 NULL）
+    sqlx::query("UPDATE book_status SET position_changed_at = last_read_at WHERE position_changed_at IS NULL AND last_read_at IS NOT NULL")
+        .execute(pool)
+        .await?;
+    println!("Migration applied: book_status.position_changed_at backfilled.");
+
+    // L2 增量同步：变更日志表 + 八张同步表的触发器（CREATE TRIGGER IF NOT EXISTS 幂等）
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS _sync_log (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_name TEXT NOT NULL,
+            row_id TEXT NOT NULL,
+            op TEXT NOT NULL,
+            at INTEGER NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    const SYNC_TABLES: [(&str, &str); 8] = [
+        ("books", "id"),
+        ("book_status", "book_id"),
+        ("book_notes", "id"),
+        ("notes", "id"),
+        ("threads", "id"),
+        ("reading_sessions", "id"),
+        ("skills", "id"),
+        ("tags", "id"),
+    ];
+
+    for (table, pk) in SYNC_TABLES {
+        for (suffix, op, key) in [
+            ("ai", "INSERT", format!("NEW.{pk}")),
+            ("au", "UPDATE", format!("NEW.{pk}")),
+            ("ad", "DELETE", format!("OLD.{pk}")),
+        ] {
+            let sql = format!(
+                "CREATE TRIGGER IF NOT EXISTS _sync_{table}_{suffix} AFTER {op} ON {table} BEGIN
+                    INSERT INTO _sync_log (table_name, row_id, op, at)
+                    VALUES ('{table}', {key}, '{op}', CAST(strftime('%s','now') AS INTEGER) * 1000);
+                END"
+            );
+            sqlx::query(&sql).execute(pool).await?;
+        }
+    }
+    println!("Migration applied: _sync_log + sync triggers.");
+
     Ok(())
 }
 

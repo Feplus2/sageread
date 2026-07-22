@@ -40,8 +40,9 @@ use crate::core::{
     },
     state::AppState,
     sync::commands::{
-        sync_backup_now, sync_get_config, sync_get_state, sync_list_backups, sync_restore,
-        sync_restart_app, sync_rollback, sync_save_config, sync_test_connection,
+        sync_backup_now, sync_get_config, sync_get_l2_status, sync_get_state, sync_has_unpushed,
+        sync_list_backups, sync_pull_now, sync_restore, sync_restart_app, sync_rollback, sync_run_now,
+        sync_save_config, sync_test_connection,
     },
     tags::commands::{
         create_tag, delete_tag, get_tag_by_id, get_tag_by_name, get_tags, update_tag,
@@ -206,15 +207,49 @@ pub fn run() {
             sync_restore,
             sync_rollback,
             sync_restart_app,
+            sync_get_l2_status,
+            sync_run_now,
+            sync_pull_now,
+            sync_has_unpushed,
         ])
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let app_handle = window.app_handle().clone();
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 阻止默认关闭：先完成退出前推送与进程清理，再主动销毁窗口
+                api.prevent_close();
+                let window = window.clone();
                 tauri::async_runtime::spawn(async move {
+                    let app_handle = window.app_handle().clone();
+
+                    // 退出前推送：L2 开启且有未推送变更时同步一轮（5s 超时，失败不阻塞退出）
+                    let exit_sync = async {
+                        let config = crate::core::sync::commands::load_webdav_config(&app_handle)?;
+                        if !config.l2_enabled || config.endpoint.is_empty() {
+                            return Ok::<(), String>(());
+                        }
+                        let state = app_handle.state::<AppState>();
+                        let pool_guard = state.db_pool.lock().await;
+                        let Some(pool) = pool_guard.as_ref() else {
+                            return Ok(());
+                        };
+                        let config_dir = app_handle.path().app_config_dir().map_err(|e| e.to_string())?;
+                        let sync_state = crate::core::sync::backup::read_sync_state(&config_dir);
+                        if crate::core::sync::engine::has_unpushed(pool, sync_state.last_pushed_seq.unwrap_or(0))
+                            .await?
+                        {
+                            log::info!("退出前推送未同步变更...");
+                            crate::core::sync::engine::run_sync(&app_handle, pool, &config).await?;
+                        }
+                        Ok(())
+                    };
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), exit_sync).await;
+
                     if let Err(e) = tauri_plugin_llamacpp::cleanup_llama_processes(app_handle).await
                     {
                         log::error!("清理 llamacpp 进程失败: {}", e);
                     }
+
+                    // destroy 不再触发 CloseRequested，避免循环
+                    let _ = window.destroy();
                 });
             }
         })

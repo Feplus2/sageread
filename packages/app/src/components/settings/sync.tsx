@@ -1,17 +1,21 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   type BackupInfo,
+  type L2Status,
   type SyncState,
   type WebdavConfig,
   syncBackupNow,
   syncGetConfig,
+  syncGetL2Status,
   syncGetState,
   syncListBackups,
   syncRestartApp,
   syncRestore,
   syncRollback,
+  syncRunNow,
   syncSaveConfig,
   syncTestConnection,
 } from "@/services/sync-service";
@@ -27,12 +31,21 @@ const DEFAULT_CONFIG: WebdavConfig = {
   password: "",
   remote_dir: "sageread-backups",
   auto_backup: "off",
+  l2_enabled: false,
+  sync_frequency: "30s",
 };
 
 const AUTO_BACKUP_OPTIONS = [
   { value: "off", label: "关闭" },
   { value: "hourly", label: "每小时一次" },
   { value: "daily", label: "每天一次" },
+];
+
+const L2_FREQUENCY_OPTIONS = [
+  { value: "off", label: "关闭" },
+  { value: "30s", label: "每 30 秒" },
+  { value: "5min", label: "每 5 分钟" },
+  { value: "30min", label: "每 30 分钟" },
 ];
 
 function formatSize(bytes: number): string {
@@ -49,10 +62,18 @@ export default function SyncSettings() {
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isLoadingBackups, setIsLoadingBackups] = useState(false);
   const [restoringName, setRestoringName] = useState<string | null>(null);
+  const [l2Status, setL2Status] = useState<L2Status | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const updateConfig = (patch: Partial<WebdavConfig>) => {
     setConfig((prev) => ({ ...prev, ...patch }));
   };
+
+  const refreshL2Status = useCallback(() => {
+    syncGetL2Status()
+      .then(setL2Status)
+      .catch((error) => console.error("加载同步状态失败:", error));
+  }, []);
 
   // 加载配置与上次备份状态
   useEffect(() => {
@@ -64,7 +85,8 @@ export default function SyncSettings() {
     syncGetState()
       .then(setSyncState)
       .catch((error) => console.error("加载备份状态失败:", error));
-  }, []);
+    refreshL2Status();
+  }, [refreshL2Status]);
 
   const refreshBackups = useCallback(async () => {
     setIsLoadingBackups(true);
@@ -160,6 +182,33 @@ export default function SyncSettings() {
     } catch (error) {
       console.error("回滚失败:", error);
       toast.error("回滚失败", { description: String(error) });
+    }
+  };
+
+  // 保存配置并联动 L2 状态展示
+  const handleSaveL2Config = async (patch: Partial<WebdavConfig>) => {
+    const next = { ...config, ...patch };
+    setConfig(next);
+    try {
+      await syncSaveConfig(next);
+      refreshL2Status();
+    } catch (error) {
+      console.error("保存配置失败:", error);
+      toast.error("保存配置失败", { description: String(error) });
+    }
+  };
+
+  const handleRunSyncNow = async () => {
+    setIsSyncing(true);
+    try {
+      const result = await syncRunNow();
+      toast.success("同步完成", { description: result.message });
+      refreshL2Status();
+    } catch (error) {
+      console.error("同步失败:", error);
+      toast.error("同步失败", { description: String(error) });
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -294,6 +343,53 @@ export default function SyncSettings() {
             ))}
           </div>
         )}
+      </div>
+      <div className="rounded-lg bg-muted/80 p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text dark:text-neutral-200">增量同步（L2）</h2>
+          <Switch
+            checked={config.l2_enabled}
+            onCheckedChange={(checked) => handleSaveL2Config({ l2_enabled: checked === true })}
+          />
+        </div>
+        <p className="mt-1 text-neutral-600 text-xs dark:text-neutral-400">
+          多设备经 WebDAV 双向同步书单、进度、笔记、对话等元数据（不含书籍文件与 API 密钥）；本地变更会在 30
+          秒内自动同步，无变更时不产生网络请求
+        </p>
+
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-neutral-600 text-xs dark:text-neutral-400">
+            拉取兜底频率（推送始终 25 秒内发出，不受此项影响）
+          </span>
+          <Select
+            value={config.sync_frequency}
+            onValueChange={(value) => handleSaveL2Config({ sync_frequency: value })}
+            disabled={!config.l2_enabled}
+          >
+            <SelectTrigger className="h-8 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {L2_FREQUENCY_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between">
+          <div className="text-neutral-600 text-xs dark:text-neutral-400">
+            {l2Status?.last_sync_at
+              ? `最近同步：${dayjs(l2Status.last_sync_at).format("YYYY-MM-DD HH:mm:ss")} · ${l2Status.last_result ?? ""}`
+              : "还没有同步过"}
+            {l2Status?.device_id && <div className="mt-1">设备 ID：{l2Status.device_id.slice(0, 8)}…</div>}
+          </div>
+          <Button size="sm" variant="outline" onClick={handleRunSyncNow} disabled={isSyncing || !config.l2_enabled}>
+            {isSyncing ? "同步中..." : "立即同步"}
+          </Button>
+        </div>
       </div>
     </div>
   );
