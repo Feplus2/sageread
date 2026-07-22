@@ -5,8 +5,12 @@ import { exportMessagesToHtml } from "@/lib/export-thread-html";
 import { exportMessagesToImage } from "@/lib/export-thread-image";
 import { exportMessagesToMarkdown } from "@/lib/export-thread-markdown";
 import { useReaderStore } from "@/pages/reader/components/reader-provider";
+import { msSinceUserNavigation } from "@/pages/reader/hooks/navigation-tracker";
+import { getBookStatus } from "@/services/book-service";
+import { syncRunNow } from "@/services/sync-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useThemeStore } from "@/store/theme-store";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   CircleQuestionMark,
   History,
@@ -14,6 +18,7 @@ import {
   ListChecks,
   MessageCirclePlus,
   NotebookPen,
+  RefreshCw,
   ScrollText,
   Search,
   Settings,
@@ -40,6 +45,39 @@ function ChatContent({ bookId }: ChatContentProps) {
   // 多选导出：组件内状态，切换对话自动退出
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const queryClient = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // 头部"刷新"：触发一轮完整 L2 同步，完成后刷新对话列表（协议 §9 双保险之一）
+  const handleRefreshSync = async () => {
+    setIsRefreshing(true);
+    try {
+      const result = await syncRunNow();
+      toast.success("同步完成", { description: result.message });
+      queryClient.invalidateQueries({ queryKey: ["threads"] });
+
+      // 当前打开的书进度被远端更新：刷新阅读位置（60 秒内用户翻过页则只提示不跳转）
+      if (bookId && result.book_status_ids.includes(bookId)) {
+        const status = await getBookStatus(bookId);
+        const view = useReaderStore.getState().view;
+        if (status?.location && view) {
+          const percent =
+            status.progressTotal > 0 ? Math.round((status.progressCurrent / status.progressTotal) * 100) : 0;
+          if (msSinceUserNavigation(bookId) < 60_000) {
+            toast.info(`另一台设备进度已到 ${percent}%，刷新后生效`);
+          } else {
+            view.goTo(status.location);
+            toast.info(`已同步另一台设备的进度（第 ${percent}%）`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("同步失败:", error);
+      toast.error("同步失败", { description: String(error) });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
   const setActiveContext = useReaderStore((state) => state.setActiveContext)!;
   const progress = useReaderStore((state) => state.progress);
   const activeContext = useReaderStore((state) => state.activeContext)!;
@@ -194,6 +232,16 @@ function ChatContent({ bookId }: ChatContentProps) {
             />
           </div>
           <div className="flex items-center gap-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="z-40 size-7 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-700"
+              title="同步刷新"
+              disabled={isRefreshing}
+              onClick={handleRefreshSync}
+            >
+              <RefreshCw className={`h-5 w-5 ${isRefreshing ? "animate-spin" : ""}`} />
+            </Button>
             {messages.length > 0 && !showThreads && (
               <Button
                 variant="ghost"

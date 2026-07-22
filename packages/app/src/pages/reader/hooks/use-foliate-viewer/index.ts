@@ -1,5 +1,8 @@
 import { useUICSS } from "@/hooks/use-ui-css";
 import type { BookDoc } from "@/lib/document";
+import { saveBookConfig } from "@/services/app-service";
+import { getBookStatus } from "@/services/book-service";
+import { syncGetConfig, syncPullNow } from "@/services/sync-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useThemeStore } from "@/store/theme-store";
 import type { BookConfig } from "@/types/book";
@@ -7,7 +10,9 @@ import type { ViewSettings } from "@/types/book";
 import type { Insets } from "@/types/misc";
 import type { FoliateView } from "@/types/view";
 import { applyFixedlayoutStyles, getStyles } from "@/utils/style";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useReaderStoreApi } from "../../components/reader-provider";
 import { useMouseEvent } from "../use-iframe-events";
 import { usePagination } from "../use-pagination";
@@ -24,6 +29,7 @@ export const useFoliateViewer = (bookId: string, bookDoc: BookDoc, config: BookC
   const viewRef = useRef<FoliateView | null>(null);
   const isInitialized = useRef(false);
   const [, forceUpdate] = useState({});
+  const queryClient = useQueryClient();
 
   useUICSS(bookId);
   useProgressAutoSave(bookId);
@@ -43,41 +49,72 @@ export const useFoliateViewer = (bookId: string, bookDoc: BookDoc, config: BookC
     console.log("[useFoliateViewer] Starting initialization");
     isInitialized.current = true;
 
-    const manager = new FoliateViewerManager({
-      bookId,
-      bookDoc,
-      config,
-      insets,
-      container: containerRef.current,
-      globalViewSettings: settings.globalViewSettings,
-      onViewCreated: (view) => {
-        store.getState().setView(view);
-        viewRef.current = view;
-      },
-    });
+    (async () => {
+      // 打开书单点快拉（L2）：~1.5s 超时，超时/失败静默放行本地位置
+      try {
+        const syncConfig = await syncGetConfig();
+        if (syncConfig?.l2_enabled && syncConfig.endpoint) {
+          const pullResult = await Promise.race([
+            syncPullNow(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+          ]);
 
-    manager.setProgressCallback((progress: ProgressData) => {
-      store.getState().setProgress(progress);
-      store.getState().setLocation(progress.location);
-    });
+          if (pullResult?.book_status_ids?.includes(bookId)) {
+            // 远端进度更新：以远端位置打开（写入 BookConfig 供 foliate init 使用）
+            const status = await getBookStatus(bookId);
+            if (status?.location) {
+              config.location = status.location;
+              await saveBookConfig(bookId, config);
+              const percent =
+                status.progressTotal > 0 ? Math.round((status.progressCurrent / status.progressTotal) * 100) : 0;
+              toast.info(`已同步另一台设备的进度（第 ${percent}%）`);
+            }
+          }
 
-    manager.setViewSettingsCallback((updatedSettings: ViewSettings) => {
-      setSettings({
-        ...settings,
-        globalViewSettings: updatedSettings,
+          if (pullResult && pullResult.thread_ids.length > 0) {
+            queryClient.invalidateQueries({ queryKey: ["threads"] });
+          }
+        }
+      } catch (error) {
+        console.warn("打开书同步快拉失败（放行本地）:", error);
+      }
+
+      const manager = new FoliateViewerManager({
+        bookId,
+        bookDoc,
+        config,
+        insets,
+        container: containerRef.current,
+        globalViewSettings: settings.globalViewSettings,
+        onViewCreated: (view) => {
+          store.getState().setView(view);
+          viewRef.current = view;
+        },
       });
-    });
 
-    managerRef.current = manager;
-
-    manager
-      .initialize()
-      .then(() => {
-        forceUpdate({});
-      })
-      .catch((error) => {
-        console.error("Failed to initialize foliate viewer:", error);
+      manager.setProgressCallback((progress: ProgressData) => {
+        store.getState().setProgress(progress);
+        store.getState().setLocation(progress.location);
       });
+
+      manager.setViewSettingsCallback((updatedSettings: ViewSettings) => {
+        setSettings({
+          ...settings,
+          globalViewSettings: updatedSettings,
+        });
+      });
+
+      managerRef.current = manager;
+
+      manager
+        .initialize()
+        .then(() => {
+          forceUpdate({});
+        })
+        .catch((error) => {
+          console.error("Failed to initialize foliate viewer:", error);
+        });
+    })();
 
     return () => {
       if (managerRef.current) {

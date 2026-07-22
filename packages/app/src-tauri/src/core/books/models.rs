@@ -73,6 +73,12 @@ pub struct BookStatus {
     pub location: String,
     #[serde(rename = "lastReadAt")]
     pub last_read_at: Option<i64>,
+    /// 位置最后一次"真实变化"的时间（同步合并用；NULL 时语义上回落 last_read_at）
+    #[serde(rename = "positionChangedAt")]
+    pub position_changed_at: Option<i64>,
+    /// 当前位置的累计活跃阅读秒数（位置变化时清零，参与同步）
+    #[serde(rename = "dwellSeconds")]
+    pub dwell_seconds: i64,
     #[serde(rename = "startedAt")]
     pub started_at: Option<i64>,
     #[serde(rename = "completedAt")]
@@ -94,6 +100,8 @@ pub struct BookStatusUpdateData {
     pub location: Option<String>,
     #[serde(rename = "lastReadAt")]
     pub last_read_at: Option<i64>,
+    #[serde(rename = "dwellSeconds")]
+    pub dwell_seconds: Option<i64>,
     #[serde(rename = "startedAt")]
     pub started_at: Option<i64>,
     #[serde(rename = "completedAt")]
@@ -170,6 +178,8 @@ impl BookStatus {
             progress_total: 0,
             location: "".to_string(),
             last_read_at: None,
+            position_changed_at: None,
+            dwell_seconds: 0,
             started_at: None,
             completed_at: None,
             metadata: None,
@@ -188,6 +198,8 @@ impl BookStatus {
             progress_total: row.try_get("progress_total")?,
             location: row.try_get("location")?,
             last_read_at: row.try_get("last_read_at")?,
+            position_changed_at: row.try_get("position_changed_at")?,
+            dwell_seconds: row.try_get("dwell_seconds")?,
             started_at: row.try_get("started_at")?,
             completed_at: row.try_get("completed_at")?,
             metadata: row

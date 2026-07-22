@@ -52,6 +52,10 @@ export interface BookStatus {
   progressTotal: number;
   location: string;
   lastReadAt?: number;
+  /** 真进度时间戳（位置最后一次真实变化的时间，同步合并用） */
+  positionChangedAt?: number | null;
+  /** 当前位置的累计活跃阅读秒数（位置变化时清零） */
+  dwellSeconds?: number;
   startedAt?: number;
   completedAt?: number;
   metadata?: {
@@ -68,6 +72,7 @@ export interface BookStatusUpdateData {
   progressTotal?: number;
   location?: string;
   lastReadAt?: number;
+  dwellSeconds?: number;
   startedAt?: number;
   completedAt?: number;
   metadata?: {

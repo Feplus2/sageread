@@ -376,6 +376,14 @@ pub async fn get_book_status(
     }
 }
 
+/// "真读"判定阈值（秒）：在上一位置活跃逗留达到该值才算真翻页（将来可做成用户配置）
+const DWELL_THRESHOLD_SECS: i64 = 30;
+
+/// position_changed_at 是否应当推进：位置真实变化 且 上一位置活跃逗留达标
+pub fn should_bump_position_changed(current_location: &str, new_location: &str, dwell_seconds: i64) -> bool {
+    new_location != current_location && dwell_seconds >= DWELL_THRESHOLD_SECS
+}
+
 #[tauri::command]
 pub async fn update_book_status(
     app_handle: AppHandle,
@@ -389,6 +397,18 @@ pub async fn update_book_status(
         .await?
         .ok_or_else(|| "书籍状态不存在".to_string())?;
 
+    // position_changed_at（真进度，同步合并用）：仅当
+    // (a) 位置与库中不同（真翻页）且 (b) 在上一位置的活跃逗留 >= 阈值时更新。
+    // 位置没变（含"仅打开书"）只更新 progress/location/last_read_at/dwell_seconds。
+    // 注意此判定须在下方 unwrap_or 消耗字段之前完成（只借用）。
+    let mut new_position_changed_at = current_status.position_changed_at;
+    if let Some(ref loc) = update_data.location {
+        let dwell = update_data.dwell_seconds.unwrap_or(0);
+        if should_bump_position_changed(&current_status.location, loc, dwell) {
+            new_position_changed_at = Some(now);
+        }
+    }
+
     let new_status = update_data.status.unwrap_or(current_status.status);
     let new_progress_current = update_data
         .progress_current
@@ -398,6 +418,7 @@ pub async fn update_book_status(
         .unwrap_or(current_status.progress_total);
     let new_location = update_data.location.unwrap_or(current_status.location);
     let new_last_read_at = update_data.last_read_at.or(current_status.last_read_at);
+    let new_dwell_seconds = update_data.dwell_seconds.unwrap_or(current_status.dwell_seconds);
     let new_started_at = update_data.started_at.or(current_status.started_at);
     let new_completed_at = update_data.completed_at.or(current_status.completed_at);
     let new_metadata = update_data.metadata.or(current_status.metadata);
@@ -406,7 +427,8 @@ pub async fn update_book_status(
         r#"
         UPDATE book_status SET
             status = ?, progress_current = ?, progress_total = ?, location = ?,
-            last_read_at = ?, started_at = ?, completed_at = ?, metadata = ?, updated_at = ?
+            last_read_at = ?, position_changed_at = ?, dwell_seconds = ?,
+            started_at = ?, completed_at = ?, metadata = ?, updated_at = ?
         WHERE book_id = ?
         "#,
     )
@@ -415,6 +437,8 @@ pub async fn update_book_status(
     .bind(new_progress_total)
     .bind(&new_location)
     .bind(new_last_read_at)
+    .bind(new_position_changed_at)
+    .bind(new_dwell_seconds)
     .bind(new_started_at)
     .bind(new_completed_at)
     .bind(
@@ -547,6 +571,8 @@ pub async fn get_books_with_status(
                 progress_total: row.try_get("progress_total").unwrap_or_default(),
                 location: row.try_get("location").unwrap_or_default(),
                 last_read_at: row.try_get("last_read_at").unwrap_or_default(),
+                position_changed_at: row.try_get("position_changed_at").unwrap_or_default(),
+                dwell_seconds: row.try_get("dwell_seconds").unwrap_or_default(),
                 started_at: row.try_get("started_at").unwrap_or_default(),
                 completed_at: row.try_get("completed_at").unwrap_or_default(),
                 metadata: {
@@ -602,6 +628,8 @@ pub async fn get_book_with_status_by_id(
                     progress_total: row.try_get("progress_total").unwrap_or_default(),
                     location: row.try_get("location").unwrap_or_default(),
                     last_read_at: row.try_get("last_read_at").unwrap_or_default(),
+                    position_changed_at: row.try_get("position_changed_at").unwrap_or_default(),
+                    dwell_seconds: row.try_get("dwell_seconds").unwrap_or_default(),
                     started_at: row.try_get("started_at").unwrap_or_default(),
                     completed_at: row.try_get("completed_at").unwrap_or_default(),
                     metadata: {
@@ -1017,4 +1045,21 @@ pub async fn delete_book_note(app_handle: AppHandle, id: String) -> Result<(), S
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_bump_position_changed;
+
+    #[test]
+    fn test_dwell_threshold() {
+        // dwell < 30 的翻页：不推进（随手乱翻不算真读）
+        assert!(!should_bump_position_changed("cfi-A", "cfi-B", 5));
+        assert!(!should_bump_position_changed("cfi-A", "cfi-B", 29));
+        // dwell >= 30 的翻页：推进（真读后的翻页）
+        assert!(should_bump_position_changed("cfi-A", "cfi-B", 30));
+        assert!(should_bump_position_changed("cfi-A", "cfi-B", 120));
+        // 位置没变：无论 dwell 多少都不推进（仅打开书/原地活动）
+        assert!(!should_bump_position_changed("cfi-A", "cfi-A", 999));
+    }
 }
