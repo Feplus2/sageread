@@ -41,16 +41,22 @@
 - 应用 UI 自定义 CSS：设置页入口 + 启动注入
 - **主题开发者友好设计**（解决 CherryStudio"留口子但不给 DOM 地图"的痛点）：关键区域加稳定 `data-region` 语义钩子，编写 `THEMING.md` 文档化钩子与 CSS 变量；主题包 = manifest.json + CSS，社区可 PR 贡献
 
-### P2 —— MCP 钩子（独立项目 sageread-mcp）
+### P2 —— MCP 钩子（独立项目 sageread-mcp）✅ 路线 A 已完成
 
-- **路线 A（先做）**：独立 MCP server（Node 或 Python），只读打开 SageRead SQLite，暴露 tools：`list_books` / `get_progress` / `get_reading_stats` / `list_highlights` / `get_thread` / `export_thread_markdown` 等。任何 AI Agent 配上即可跨应用访问阅读数据；联动 ima 侧 MCP（ima 已打通）实现"把对话搬进 ima 知识库"等灵活操作
+- **路线 A（已完成 2026-07-21）**：`F:/MyProjects/sageread-mcp`（TypeScript + 官方 SDK，stdio，better-sqlite3 只读）。tools：list_books / get_book_progress / get_reading_stats / list_threads（支持 starred_only）/ get_thread / list_book_notes / export_thread_markdown。已配入 Kimi CLI（`~/.kimi-code/mcp.json`）
+- **对话星标 ✅**：threads.starred 列（fork 迁移通道 `database.rs run_migrations`），列表星标按钮+置顶；MCP 可按星标过滤——ima 导出工作流的数据基础
 - **路线 B（成熟后提 PR）**：Tauri 后端内嵌 MCP over HTTP（`rmcp` crate），实时数据、免 DB 锁顾虑，作为给上游的重磅功能 PR
-- **候选：APP 帮助助手**——把 `docs/` 等文档喂给内置问答，回答"这个 App 怎么用"（书籍 RAG 基础设施可复用：embedding + sqlite-vec；模型走辅助模型）
+- **候选：APP 帮助助手**——把 `docs/` 等文档喂给内置问答（书籍 RAG 基础设施可复用；模型走辅助模型）
+- **待办：ima 侧 MCP 配置**（社区 tencent-ima-copilot-mcp 或官方 API），配好后"导出星标对话到 ima"一句话即可触发
 
-### P3 —— 数据同步（WebDAV / 坚果云）
+### P3 —— 数据同步（WebDAV / 坚果云）【设计已定 2026-07-21】
 
-- 采用 CherryStudio 同款**备份/恢复**模型（打包上传、换机恢复），第一版不做实时双向同步
-- 注意 SQLite 热拷贝风险：备份前 checkpoint
+决策：**L1 先行、元数据为主**（书籍文件默认不同步，照顾坚果云免费档流量）。
+
+- **L1 一致性备份/恢复（当前任务）**：`VACUUM INTO` 在线快照 → zip（db 快照 + JSON 配置[排除 model-provider.json] + themes + manifest.json）→ WebDAV 上传；sha256 去重（无变化不传）；保留最近 10 份轮转；恢复前自动本地备份（可回滚）；恢复走"重启生效"流程（pending-restore 标记，启动时先换文件再开库）；WebDAV 走 Rust reqwest（绕 WebView2 CORS）；密码存本地独立文件，不进备份包
+- **L2 记录级增量同步（下一步）**：不传整个库，传变更——changeset（JSONL，带设备 id）+ 按行 `updated_at` LWW + 进度取 `last_read_at` 大者 + 删除墓碑 + reading_sessions 只增无冲突；书籍走 sha256 内容寻址，全网只传一次。**协议格式第一天就按"未来手机端也说这门语言"设计**
+- **L3 端到端加密（可选）**：上传前 AES-GCM，密钥不落地
+- 背景：CherryStudio 是备份/恢复模型（[文档](https://docs.cherry-ai.com/pre-basic/data-settings/webdav)），其弱点（无变化也全量备份、多设备覆盖、无合并，见其 issue #8872/#1752）即 L1/L2 要修掉的点
 
 ### P4 —— 远景（不承诺）
 
