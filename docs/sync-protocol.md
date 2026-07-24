@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS _sync_log (
 - **2a 审计修复**（2026-07-22）：① L1 备份成功曾重置全部 L2 状态（device_id/水位丢失，已修并有回归测试）；② devices 索引读失败禁止覆盖写（防网络抖动抹掉他端条目）；③ 三处同步落地逻辑合并为共享函数 `applySyncResult`，统一修复 reader store 缓存 config 陈旧导致的落点回写缺陷，划线/书架拉取后 UI 刷新补全（SyncRunResult 增 `books_changed`/`notes_changed`）；④ 开书快拉不再回写旧 progress；防跳动不再被程序化跳转污染；补 online 事件触发同步。已知遗留：l2-safety 快照尚无回滚入口（目前只能手动拷贝恢复）。
 - **2b 书籍通道**：sha256 索引、上传、懒下载、书架"云端未下载"标识
 - **2c 打磨**：调度优化（空闲才跑）、大库首次全量引导、移动端接入文档
+- **资产通道（2026-07-24 落地）**：字体（`fonts/*.woff2`）与自定义背景图（`reader-backgrounds/*`）内容寻址双向同步，云端布局 `assets/<sha256前2位>/<sha256>` + `assets-index.json`（key=`kind/filename`），随每轮 run_sync 自动上传本地新增/下载云端缺失；背景选择状态（readerBackground，剔除设备相关 fileUrl）与辅助模型选择（utilityModel，仅 id/名称）经 `ui-config.json` 整文件 LWW 同步，变更用值对比检测。**安全红线：modelProviders（含 apiKey）永不同步**；辅助模型选择需两端配置同一 provider 才生效
 
 ## 12. 开放问题（请评审）
 
