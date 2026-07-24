@@ -78,6 +78,15 @@ const SettingsDropdown = () => {
     refreshCustomBackgrounds();
   }, [refreshCustomBackgrounds]);
 
+  // 资产同步下载了新背景图后刷新列表
+  useEffect(() => {
+    const onUpdated = () => {
+      refreshCustomBackgrounds();
+    };
+    window.addEventListener("reader-backgrounds-updated", onUpdated);
+    return () => window.removeEventListener("reader-backgrounds-updated", onUpdated);
+  }, [refreshCustomBackgrounds]);
+
   const handleSelectSolid = (name: string) => {
     setThemeColor(name);
     setReaderBackground({ kind: "solid", fg: readerBackground?.fg });

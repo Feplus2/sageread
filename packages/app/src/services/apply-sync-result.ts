@@ -1,6 +1,8 @@
 import { markProgrammaticNavigation, msSinceUserNavigation } from "@/pages/reader/hooks/navigation-tracker";
 import { getBookStatus } from "@/services/book-service";
 import type { SyncRunResult } from "@/services/sync-service";
+import { reapplyCurrentBackground } from "@/services/ui-config-sync";
+import { useFontStore } from "@/store/font-store";
 import { useLayoutStore } from "@/store/layout-store";
 import { useLibraryStore } from "@/store/library-store";
 import type { QueryClient } from "@tanstack/react-query";
@@ -24,6 +26,15 @@ export async function applySyncResult(result: SyncRunResult, queryClient: QueryC
   }
   if (result.books_changed) {
     void useLibraryStore.getState().refreshBooks();
+  }
+
+  // 资产下载联动：刷新字体列表；重解析当前背景 fileUrl + 通知设置面板刷新背景列表
+  if (result.fonts_downloaded > 0) {
+    void useFontStore.getState().refreshFonts();
+  }
+  if (result.backgrounds_downloaded > 0) {
+    void reapplyCurrentBackground();
+    window.dispatchEvent(new CustomEvent("reader-backgrounds-updated"));
   }
 
   await applyProgressToOpenBooks(result.book_status_ids);

@@ -3,25 +3,33 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
+  type AssetsStatus,
   type BackupInfo,
+  type CloudBookInfo,
   type L2Status,
+  type SnapshotInfo,
   type SyncState,
   type WebdavConfig,
   syncBackupNow,
+  syncGetCloudAssets,
+  syncGetCloudBooks,
   syncGetConfig,
   syncGetL2Status,
   syncGetState,
   syncListBackups,
+  syncListL2Snapshots,
   syncRestartApp,
   syncRestore,
   syncRollback,
+  syncRollbackL2,
   syncRunNow,
   syncSaveConfig,
   syncTestConnection,
+  syncUploadAllBooks,
 } from "@/services/sync-service";
 import { ask } from "@tauri-apps/plugin-dialog";
 import dayjs from "dayjs";
-import { CloudUpload, RefreshCw, RotateCcw } from "lucide-react";
+import { CloudUpload, Database, RefreshCw, RotateCcw, Upload } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -64,6 +72,11 @@ export default function SyncSettings() {
   const [restoringName, setRestoringName] = useState<string | null>(null);
   const [l2Status, setL2Status] = useState<L2Status | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [cloudBooks, setCloudBooks] = useState<CloudBookInfo[]>([]);
+  const [isUploadingAll, setIsUploadingAll] = useState(false);
+  const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
+  const [isLoadingSnapshots, setIsLoadingSnapshots] = useState(false);
+  const [assetsStatus, setAssetsStatus] = useState<AssetsStatus | null>(null);
 
   const updateConfig = (patch: Partial<WebdavConfig>) => {
     setConfig((prev) => ({ ...prev, ...patch }));
@@ -192,6 +205,33 @@ export default function SyncSettings() {
     try {
       await syncSaveConfig(next);
       refreshL2Status();
+
+      // 首次开启 L2 时引导上传书籍文件
+      if (patch.l2_enabled === true && !config.l2_enabled) {
+        try {
+          const cloudList = await syncGetCloudBooks();
+          if (cloudList.length === 0) {
+            const confirmed = await ask(
+              "检测到本地有书籍但云端还没有文件。\n\n是否立即上传所有书籍文件到云端？（元数据已自动同步，此步仅上传文件）",
+              { title: "书籍文件同步", kind: "info" },
+            );
+            if (confirmed) {
+              setIsUploadingAll(true);
+              try {
+                const result = await syncUploadAllBooks();
+                toast.success("上传完成", {
+                  description: `共 ${result.total} 本，新上传 ${result.uploaded}，跳过 ${result.skipped}`,
+                });
+                refreshCloudBooks();
+              } finally {
+                setIsUploadingAll(false);
+              }
+            }
+          }
+        } catch {
+          // 引导失败不影响主流程
+        }
+      }
     } catch (error) {
       console.error("保存配置失败:", error);
       toast.error("保存配置失败", { description: String(error) });
@@ -211,6 +251,99 @@ export default function SyncSettings() {
       setIsSyncing(false);
     }
   };
+
+  const refreshCloudBooks = useCallback(async (silent = true) => {
+    try {
+      const list = await syncGetCloudBooks();
+      setCloudBooks(list);
+      return list.length;
+    } catch (error) {
+      console.error("获取云端书目失败:", error);
+      if (!silent) {
+        toast.error("获取云端书目失败", { description: String(error) });
+      }
+      return -1;
+    }
+  }, []);
+
+  const handleUploadAllBooks = async () => {
+    setIsUploadingAll(true);
+    try {
+      const result = await syncUploadAllBooks();
+      let detail = `共 ${result.total} 本，新上传 ${result.uploaded}，跳过 ${result.skipped}，失败 ${result.failed}`;
+      if (result.failed > 0 && result.first_error) {
+        detail += `\n首个失败：${result.first_error}`;
+      }
+      if (result.failed > 0) {
+        toast.error("上传未全部完成", { description: detail });
+      } else if (result.uploaded > 0) {
+        toast.success("上传完成", { description: detail });
+      } else {
+        toast.info("上传完成", { description: detail });
+      }
+
+      // 坚果云 PUT 后 GET 可能有短暂延迟：延迟重试刷新，直到读到数据或超过 3 次
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await new Promise((r) => setTimeout(r, 800));
+        const count = await refreshCloudBooks(attempt < 2);
+        if (count > 0) break;
+      }
+    } catch (error) {
+      console.error("批量上传失败:", error);
+      toast.error("批量上传失败", { description: String(error) });
+    } finally {
+      setIsUploadingAll(false);
+    }
+  };
+
+  const refreshSnapshots = useCallback(async () => {
+    setIsLoadingSnapshots(true);
+    try {
+      const list = await syncListL2Snapshots();
+      setSnapshots(list);
+    } catch (error) {
+      console.error("获取快照列表失败:", error);
+    } finally {
+      setIsLoadingSnapshots(false);
+    }
+  }, []);
+
+  const refreshAssetsStatus = useCallback(async () => {
+    try {
+      const status = await syncGetCloudAssets();
+      setAssetsStatus(status);
+    } catch (error) {
+      console.error("获取资产状态失败:", error);
+    }
+  }, []);
+
+  const handleRollbackL2 = async (snapshot: SnapshotInfo) => {
+    const confirmed = await ask(
+      `确定要回滚到 ${dayjs(snapshot.created_at).format("YYYY-MM-DD HH:mm:ss")} 的同步前快照吗？\n\n当前数据会先备份，然后替换为快照内容。`,
+      { title: "确认回滚", kind: "warning" },
+    );
+    if (!confirmed) return;
+    try {
+      const message = await syncRollbackL2(snapshot.name);
+      toast.success(message);
+      const restart = await ask("是否立即重启应用完成回滚？", { title: "回滚就绪" });
+      if (restart) {
+        await syncRestartApp();
+      }
+    } catch (error) {
+      console.error("回滚失败:", error);
+      toast.error("回滚失败", { description: String(error) });
+    }
+  };
+
+  // L2 开启时加载云端书目、快照列表和资产状态
+  useEffect(() => {
+    if (config.l2_enabled) {
+      refreshCloudBooks();
+      refreshSnapshots();
+      refreshAssetsStatus();
+    }
+  }, [config.l2_enabled, refreshCloudBooks, refreshSnapshots, refreshAssetsStatus]);
 
   return (
     <div className="space-y-4 p-4 pt-3">
@@ -391,6 +524,87 @@ export default function SyncSettings() {
           </Button>
         </div>
       </div>
+
+      {/* 书籍文件同步 */}
+      {config.l2_enabled && (
+        <div className="rounded-lg bg-muted/80 p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text dark:text-neutral-200">书籍文件同步</h2>
+            <Button size="sm" variant="outline" onClick={handleUploadAllBooks} disabled={isUploadingAll}>
+              <Upload className="h-4 w-4" />
+              {isUploadingAll ? "上传中..." : "上传全部"}
+            </Button>
+          </div>
+          <p className="mt-2 text-neutral-600 text-xs dark:text-neutral-400">
+            云端共 {cloudBooks.length} 本书籍文件，其中 {cloudBooks.filter((b) => b.local_exists).length} 本本地已有
+          </p>
+          {cloudBooks.filter((b) => !b.local_exists).length > 0 && (
+            <p className="mt-1 text-neutral-600 text-xs dark:text-neutral-400">
+              {cloudBooks.filter((b) => !b.local_exists).length} 本仅在云端，打开时自动下载
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 资产同步（字体/背景图/背景选择/辅助模型） */}
+      {config.l2_enabled && (
+        <div className="rounded-lg bg-muted/80 p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text dark:text-neutral-200">资产与偏好同步</h2>
+            <Button size="sm" variant="outline" onClick={refreshAssetsStatus}>
+              <RefreshCw className="h-4 w-4" />
+              刷新
+            </Button>
+          </div>
+          <p className="mt-2 text-neutral-600 text-xs dark:text-neutral-400">
+            字体：云端 {assetsStatus?.cloud_fonts ?? 0} 个（本地 {assetsStatus?.local_fonts ?? 0} 个）· 背景图：云端{" "}
+            {assetsStatus?.cloud_backgrounds ?? 0} 张（本地 {assetsStatus?.local_backgrounds ?? 0} 张）
+          </p>
+          <p className="mt-1 text-neutral-600 text-xs dark:text-neutral-400">
+            字体、自定义背景图自动双向同步；当前背景选择与辅助模型选择随 L2
+            同步。辅助模型需两端配置同一服务商才生效；API 密钥永不同步。
+          </p>
+        </div>
+      )}
+
+      {/* 同步前快照 */}
+      {config.l2_enabled && (
+        <div className="rounded-lg bg-muted/80 p-4">
+          <div className="flex items-center justify-between pb-2">
+            <h2 className="text dark:text-neutral-200">同步前快照</h2>
+            <Button size="sm" variant="outline" onClick={refreshSnapshots} disabled={isLoadingSnapshots}>
+              <RefreshCw className={`h-4 w-4 ${isLoadingSnapshots ? "animate-spin" : ""}`} />
+              刷新
+            </Button>
+          </div>
+          <p className="mb-2 text-neutral-600 text-xs dark:text-neutral-400">
+            每次应用远端变更前自动创建，保留最近 3 份
+          </p>
+          {snapshots.length === 0 ? (
+            <p className="text-neutral-600 text-xs dark:text-neutral-400">暂无快照</p>
+          ) : (
+            <div className="space-y-2">
+              {snapshots.map((snapshot) => (
+                <div key={snapshot.name} className="flex items-center justify-between border-t pt-2">
+                  <div className="flex items-center gap-2">
+                    <Database className="h-4 w-4 text-neutral-500" />
+                    <div>
+                      <div className="text-sm dark:text-neutral-200">
+                        {dayjs(snapshot.created_at).format("YYYY-MM-DD HH:mm:ss")}
+                      </div>
+                      <div className="text-neutral-600 text-xs dark:text-neutral-400">{formatSize(snapshot.size)}</div>
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => handleRollbackL2(snapshot)}>
+                    <RotateCcw className="h-3 w-3" />
+                    回滚
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

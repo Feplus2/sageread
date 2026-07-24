@@ -1,7 +1,9 @@
+pub mod assets;
 pub mod backup;
 pub mod changelog;
 pub mod commands;
 pub mod engine;
+pub mod files;
 pub mod merge;
 pub mod models;
 pub mod restore;

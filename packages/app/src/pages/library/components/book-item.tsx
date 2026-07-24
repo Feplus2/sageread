@@ -5,16 +5,19 @@ import type { BookTag } from "@/pages/library/hooks/use-tags-management";
 import { type AITagSuggestion, generateTagsWithAI } from "@/services/ai-tag-service";
 import { updateBookVectorizationMeta } from "@/services/book-service";
 import { type EpubIndexResult, indexEpub } from "@/services/book-service";
+import { syncDownloadBook } from "@/services/sync-service";
 import { createTag, getTags } from "@/services/tag-service";
 import { useLayoutStore } from "@/store/layout-store";
 import { useNotificationStore } from "@/store/notification-store";
 import type { BookWithStatusAndUrls } from "@/types/simple-book";
 import { getCurrentVectorModelConfig } from "@/utils/model";
+import { appDataDir } from "@tauri-apps/api/path";
 import { listen } from "@tauri-apps/api/event";
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { MoreHorizontal } from "lucide-react";
+import { exists } from "@tauri-apps/plugin-fs";
+import { Cloud, MoreHorizontal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import EditInfo from "./edit-info";
@@ -72,10 +75,36 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
   }, [book.id]);
 
   const { openBook } = useLayoutStore();
+  const [isCloudOnly, setIsCloudOnly] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const handleClick = useCallback(() => {
-    openBook(book.id, book.title);
-  }, [book.id, book.title, openBook]);
+  // 检测书籍文件是否仅在云端（本地文件不存在）
+  useEffect(() => {
+    if (book.filePath) {
+      appDataDir().then((base) => exists(`${base}/${book.filePath}`)).then((fileExists) => {
+        setIsCloudOnly(!fileExists);
+      }).catch(() => setIsCloudOnly(false));
+    }
+  }, [book.filePath]);
+
+  const handleClick = useCallback(async () => {
+    if (isCloudOnly) {
+      setIsDownloading(true);
+      try {
+        toast.info(`正在下载《${book.title}》...`);
+        await syncDownloadBook(book.id);
+        setIsCloudOnly(false);
+        openBook(book.id, book.title);
+      } catch (error) {
+        console.error("下载书籍失败:", error);
+        toast.error("下载失败", { description: String(error) });
+      } finally {
+        setIsDownloading(false);
+      }
+    } else {
+      openBook(book.id, book.title);
+    }
+  }, [book.id, book.title, isCloudOnly, openBook]);
 
   const handleAIGenerateTags = useCallback(async () => {
     if (!selectedModel) {
@@ -163,7 +192,7 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
   const handleNativeDelete = useCallback(async () => {
     if (onDelete) {
       try {
-        const confirmed = await ask(`${book.title}\n\n此操作无法撤销。`, {
+        const confirmed = await ask(`确定要删除《${book.title}》吗？\n\n书籍将被移入回收站，可在回收站中恢复。`, {
           title: "确认删除",
           kind: "warning",
         });
@@ -539,7 +568,7 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
               <h4 className="truncate text-neutral-600 text-sm leading-tight dark:text-neutral-200">{book.title}</h4>
             </div>
 
-            <div data-region="book-cover" className="aspect-[4/5] w-full overflow-hidden">
+            <div data-region="book-cover" className="relative aspect-[4/5] w-full overflow-hidden">
               {book.coverUrl ? (
                 <img src={book.coverUrl} alt={book.title} className="h-full w-full object-cover" />
               ) : (
@@ -548,6 +577,16 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
                     <div className="mb-2 font-bold text-2xl text-neutral-500 dark:text-neutral-400">📖</div>
                     <div className="line-clamp-3 text-neutral-600 text-xs dark:text-neutral-300">{book.title}</div>
                   </div>
+                </div>
+              )}
+              {isCloudOnly && (
+                <div className="absolute top-1 right-1 rounded-full bg-black/60 p-1" title="仅在云端，点击打开时自动下载">
+                  <Cloud size={12} className="text-white" />
+                </div>
+              )}
+              {isDownloading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                  <span className="text-white text-xs">下载中...</span>
                 </div>
               )}
             </div>

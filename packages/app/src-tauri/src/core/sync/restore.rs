@@ -171,3 +171,70 @@ pub fn rollback(app: &AppHandle) -> Result<String, String> {
     let _ = fs::remove_dir_all(&src_dir);
     Ok("已回滚到恢复前的数据，请重启应用生效".to_string())
 }
+
+/* ---------------- L2 同步前安全快照 ---------------- */
+
+/// 快照信息（设置页展示）
+#[derive(serde::Serialize, Debug)]
+pub struct SnapshotInfo {
+    pub name: String,
+    pub created_at: i64,
+    pub size: u64,
+}
+
+/// 列出 L2 同步前安全快照（sync-staging/l2-safety/app-<ts>.db）
+pub fn list_l2_snapshots(app: &AppHandle) -> Result<Vec<SnapshotInfo>, String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let dir = config_dir.join("sync-staging").join("l2-safety");
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut snapshots: Vec<SnapshotInfo> = fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            name.starts_with("app-") && name.ends_with(".db")
+        })
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // 从文件名提取时间戳：app-<ts>.db
+            let ts = name.trim_start_matches("app-").trim_end_matches(".db").parse::<i64>().unwrap_or(0);
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            Some(SnapshotInfo { name, created_at: ts, size })
+        })
+        .collect();
+
+    // 按时间倒序（最新在前）
+    snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(snapshots)
+}
+
+/// 回滚到指定 L2 安全快照：直接替换数据库文件，需重启生效
+pub fn rollback_to_l2_snapshot(app: &AppHandle, name: &str) -> Result<String, String> {
+    // 安全校验：只允许 app-*.db 格式
+    if !name.starts_with("app-") || !name.ends_with(".db") || name.contains("..") {
+        return Err("无效的快照名称".to_string());
+    }
+
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let snapshot_path = config_dir.join("sync-staging").join("l2-safety").join(name);
+    if !snapshot_path.exists() {
+        return Err(format!("快照不存在: {name}"));
+    }
+
+    let db_path = config_dir.join("database").join("app.db");
+
+    // 先备份当前数据库（可回滚的回滚）
+    if db_path.exists() {
+        let backup_name = format!("app-pre-rollback-{}.db", chrono::Utc::now().timestamp_millis());
+        let backup_path = config_dir.join("sync-staging").join("l2-safety").join(&backup_name);
+        fs::copy(&db_path, &backup_path).map_err(|e| format!("备份当前数据库失败: {e}"))?;
+    }
+
+    // 替换数据库
+    fs::copy(&snapshot_path, &db_path).map_err(|e| format!("替换数据库失败: {e}"))?;
+
+    Ok("已回滚到同步前快照，请重启应用生效".to_string())
+}

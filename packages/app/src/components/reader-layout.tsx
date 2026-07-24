@@ -16,6 +16,7 @@ import {
   syncPullNow,
   syncRunNow,
 } from "@/services/sync-service";
+import { syncUiConfigNow } from "@/services/ui-config-sync";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useLayoutStore } from "@/store/layout-store";
 import { useThemeStore } from "@/store/theme-store";
@@ -88,16 +89,29 @@ export default function ReaderLayout() {
   // 固定 25 秒基础 tick——dirty 立即完整同步（推+拉，不受频率下拉影响）；
   // clean 时按 sync_frequency 兜底轻量拉取（syncPullNow：远端无新意时只有一个小 GET，无变更零下载）。
   // 启动时自动一轮照旧。
+  // 空闲调度：用户活跃交互时跳过同步，放下书 10 秒后自动同步。
   // biome-ignore lint/correctness/useExhaustiveDependencies: queryClient 实例稳定，定时器只需注册一次
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
     let cancelled = false;
     let syncing = false;
     let lastPullAt = 0;
+    let lastInteraction = Date.now();
     let onlineCleanup: (() => void) | null = null;
+
+    // 空闲检测：监听用户交互事件
+    const markActive = () => { lastInteraction = Date.now(); };
+    const interactionEvents = ["click", "keydown", "wheel", "touchstart"] as const;
+    for (const evt of interactionEvents) {
+      window.addEventListener(evt, markActive, { passive: true });
+    }
+    const isIdle = () => Date.now() - lastInteraction >= 10_000;
 
     const handleResult = (result: SyncRunResult) => {
       void applySyncResult(result, queryClient);
+      // 每轮 Rust 同步后附带一轮 UI 配置同步（背景选择/辅助模型，前端 LWW）
+      void syncUiConfigNow();
+      // 自动同步完全静默：不弹 toast、不写通知中心（仅手动同步才有反馈）
     };
 
     const runWith = (fn: () => Promise<SyncRunResult>) => {
@@ -131,6 +145,9 @@ export default function ReaderLayout() {
                 : 30_000;
 
         timer = setInterval(() => {
+          // 空闲调度：用户活跃时跳过本轮，下个周期再试
+          if (!isIdle()) return;
+
           syncHasUnpushed()
             .then((dirty) => {
               if (dirty) {
@@ -165,6 +182,9 @@ export default function ReaderLayout() {
       cancelled = true;
       if (timer) clearInterval(timer);
       onlineCleanup?.();
+      for (const evt of interactionEvents) {
+        window.removeEventListener(evt, markActive);
+      }
     };
   }, []);
 

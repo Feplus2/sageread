@@ -40,9 +40,12 @@ use crate::core::{
     },
     state::AppState,
     sync::commands::{
-        sync_backup_now, sync_get_config, sync_get_l2_status, sync_get_state, sync_has_unpushed,
-        sync_list_backups, sync_pull_now, sync_restore, sync_restart_app, sync_rollback, sync_run_now,
-        sync_save_config, sync_test_connection,
+        sync_backup_now, sync_download_book, sync_get_cloud_assets, sync_get_cloud_books,
+        sync_get_config, sync_get_l2_status, sync_get_state, sync_get_ui_config,
+        sync_has_unpushed, sync_list_backups, sync_list_l2_snapshots, sync_pull_now,
+        sync_put_ui_config, sync_restore, sync_restart_app, sync_rollback, sync_rollback_l2,
+        sync_run_now, sync_save_config, sync_test_connection, sync_upload_all_books,
+        sync_upload_book,
     },
     tags::commands::{
         create_tag, delete_tag, get_tag_by_id, get_tag_by_name, get_tags, update_tag,
@@ -211,6 +214,15 @@ pub fn run() {
             sync_run_now,
             sync_pull_now,
             sync_has_unpushed,
+            sync_upload_book,
+            sync_download_book,
+            sync_get_cloud_books,
+            sync_upload_all_books,
+            sync_list_l2_snapshots,
+            sync_rollback_l2,
+            sync_get_cloud_assets,
+            sync_put_ui_config,
+            sync_get_ui_config,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

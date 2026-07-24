@@ -1,6 +1,7 @@
 use super::models::{BackupInfo, BackupManifest, BackupOutcome, SyncState, WebdavConfig};
-use super::{backup, engine, restore, webdav};
+use super::{assets, backup, engine, files, restore, webdav};
 use crate::core::state::AppState;
+use sqlx::Row;
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -174,4 +175,131 @@ pub async fn sync_has_unpushed(app: AppHandle, state: State<'_, AppState>) -> Re
     let db_pool_guard = state.db_pool.lock().await;
     let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
     engine::has_unpushed(pool, sync_state.last_pushed_seq.unwrap_or(0)).await
+}
+
+/* ---------------- L2 书籍文件通道 ---------------- */
+
+/// 上传单本书的文件到云端
+#[tauri::command]
+pub async fn sync_upload_book(app: AppHandle, state: State<'_, AppState>, book_id: String) -> Result<files::FileEntry, String> {
+    let config = load_config(&app)?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let sync_state = backup::read_sync_state(&config_dir);
+    let device_id = sync_state.device_id.ok_or("L2 未初始化（无 device_id）")?;
+
+    let db_pool_guard = state.db_pool.lock().await;
+    let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
+
+    let row = sqlx::query("SELECT title, file_path, format FROM books WHERE id = ?")
+        .bind(&book_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("查询书籍失败: {e}"))?
+        .ok_or_else(|| format!("书籍不存在: {book_id}"))?;
+
+    let title: String = row.get("title");
+    let file_path: String = row.get("file_path");
+    let format: String = row.get("format");
+
+    files::upload_book(&config, &app_data_dir, &device_id, &book_id, &file_path, &title, &format).await
+}
+
+/// 下载单本书的文件（懒加载）
+#[tauri::command]
+pub async fn sync_download_book(app: AppHandle, state: State<'_, AppState>, book_id: String) -> Result<String, String> {
+    let config = load_config(&app)?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    let db_pool_guard = state.db_pool.lock().await;
+    let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
+
+    let row = sqlx::query("SELECT file_path FROM books WHERE id = ?")
+        .bind(&book_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("查询书籍失败: {e}"))?
+        .ok_or_else(|| format!("书籍不存在: {book_id}"))?;
+
+    let file_path: String = row.get("file_path");
+
+    // 从 files-index 查找 sha256
+    let index = files::read_files_index(&config).await?;
+    let entry = index.get(&book_id).ok_or_else(|| format!("云端无此书文件: {book_id}"))?;
+
+    let path = files::download_book(&config, &app_data_dir, &book_id, &file_path, &entry.sha256).await?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 获取云端书目列表（含本地是否已有标记）
+#[tauri::command]
+pub async fn sync_get_cloud_books(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<files::CloudBookInfo>, String> {
+    let config = load_config(&app)?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    let db_pool_guard = state.db_pool.lock().await;
+    let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
+
+    files::get_cloud_books(&config, pool, &app_data_dir).await
+}
+
+/// 批量上传本地所有书籍文件（首次引导用）
+#[tauri::command]
+pub async fn sync_upload_all_books(app: AppHandle, state: State<'_, AppState>) -> Result<files::UploadAllResult, String> {
+    let config = load_config(&app)?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let sync_state = backup::read_sync_state(&config_dir);
+    let device_id = sync_state.device_id.ok_or("L2 未初始化（无 device_id）")?;
+
+    let db_pool_guard = state.db_pool.lock().await;
+    let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
+
+    files::upload_all_books(&config, pool, &app_data_dir, &device_id).await
+}
+
+/* ---------------- L2 安全快照回滚 ---------------- */
+
+/// 列出 L2 同步前安全快照
+#[tauri::command]
+pub async fn sync_list_l2_snapshots(app: AppHandle) -> Result<Vec<restore::SnapshotInfo>, String> {
+    restore::list_l2_snapshots(&app)
+}
+
+/// 回滚到指定 L2 安全快照（重启生效）
+#[tauri::command]
+pub async fn sync_rollback_l2(app: AppHandle, name: String) -> Result<String, String> {
+    restore::rollback_to_l2_snapshot(&app, &name)
+}
+
+/* ---------------- L2 资产通道（字体/背景图） ---------------- */
+
+/// 资产同步状态（云端/本地的字体与背景数量）
+#[tauri::command]
+pub async fn sync_get_cloud_assets(app: AppHandle) -> Result<assets::AssetsStatus, String> {
+    let config = load_config(&app)?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    assets::get_assets_status(&config, &app_data_dir, &config_dir).await
+}
+
+/* ---------------- L2 UI 配置同步（背景选择/辅助模型） ---------------- */
+
+/// 上传 UI 配置 JSON（不透明搬运，不解析）
+#[tauri::command]
+pub async fn sync_put_ui_config(app: AppHandle, json: String) -> Result<(), String> {
+    let config = load_config(&app)?;
+    webdav::put_path(&config, "sageread-sync/ui-config.json", json.into_bytes()).await
+}
+
+/// 下载 UI 配置 JSON（不存在返回 None）
+#[tauri::command]
+pub async fn sync_get_ui_config(app: AppHandle) -> Result<Option<String>, String> {
+    let config = load_config(&app)?;
+    match webdav::get_path(&config, "sageread-sync/ui-config.json").await? {
+        Some(bytes) => Ok(Some(
+            String::from_utf8(bytes).map_err(|e| format!("ui-config.json 编码非法: {e}"))?,
+        )),
+        None => Ok(None),
+    }
 }

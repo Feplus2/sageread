@@ -1,4 +1,6 @@
+use super::assets;
 use super::changelog::{self, ChangeRow};
+use super::files;
 use super::merge::{self, ThreadRowData};
 use super::models::{SyncState, WebdavConfig};
 use super::tables::{self, ColType};
@@ -29,6 +31,10 @@ pub struct SyncRunResult {
     pub books_changed: bool,
     /// 本轮拉取 notes / book_notes 表有实际变更（供前端刷新划线笔记）
     pub notes_changed: bool,
+    /// 本轮下载的字体数（供前端刷新字体）
+    pub fonts_downloaded: usize,
+    /// 本轮下载的背景图数（供前端刷新背景列表）
+    pub backgrounds_downloaded: usize,
 }
 
 /// 单包应用结果：条数 + 分表变更 id + 书架/笔记变更信号
@@ -809,8 +815,56 @@ pub async fn run_sync(app: &AppHandle, pool: &SqlitePool, config: &WebdavConfig)
         prune_remote_changesets(config, &device_id).await;
     }
 
+    // ---- 书籍文件自动上传（静默，失败只 warn） ----
+    {
+        let app_data_dir = app.path().app_data_dir().ok();
+        if let Some(app_data_dir) = app_data_dir {
+            match files::find_unuploaded_books(config, pool, &app_data_dir).await {
+                Ok(unuploaded) => {
+                    for (book_id, title, src, format) in unuploaded {
+                        if let Err(e) =
+                            files::upload_book(config, &app_data_dir, &device_id, &book_id, &src, &title, &format)
+                                .await
+                        {
+                            log::warn!("书籍文件自动上传失败（忽略）: {title}: {e}");
+                        }
+                    }
+                }
+                Err(e) => log::warn!("查询未上传书籍失败（忽略）: {e}"),
+            }
+        }
+    }
+
+    // ---- 资产（字体/背景图）自动上传（静默，失败只 warn） ----
+    let mut fonts_downloaded = 0usize;
+    let mut backgrounds_downloaded = 0usize;
+    {
+        let app_data_dir = app.path().app_data_dir().ok();
+        let config_dir_opt = app.path().app_config_dir().ok();
+        if let (Some(app_data_dir), Some(config_dir)) = (app_data_dir, config_dir_opt) {
+            if let Err(e) = assets::upload_missing_assets(config, &app_data_dir, &config_dir, &device_id).await {
+                log::warn!("资产自动上传失败（忽略）: {e}");
+            }
+        }
+    }
+
     // ---- 拉取：应用其他设备的 changesets ----
     let pulled = pull_from_devices(app, pool, config, &device_id, &mut state).await?;
+
+    // ---- 资产（字体/背景图）下载（静默，失败只 warn） ----
+    {
+        let app_data_dir = app.path().app_data_dir().ok();
+        let config_dir_opt = app.path().app_config_dir().ok();
+        if let (Some(app_data_dir), Some(config_dir)) = (app_data_dir, config_dir_opt) {
+            match assets::download_missing_assets(config, &app_data_dir, &config_dir).await {
+                Ok((fonts, backgrounds)) => {
+                    fonts_downloaded = fonts;
+                    backgrounds_downloaded = backgrounds;
+                }
+                Err(e) => log::warn!("资产下载失败（忽略）: {e}"),
+            }
+        }
+    }
 
     state.last_l2_sync_at = Some(now_ms());
     // 结果语义化：推送/拉取分述，双零时说明无新变更
@@ -842,6 +896,8 @@ pub async fn run_sync(app: &AppHandle, pool: &SqlitePool, config: &WebdavConfig)
         thread_ids: pulled.thread_ids,
         books_changed: pulled.books_changed,
         notes_changed: pulled.notes_changed,
+        fonts_downloaded,
+        backgrounds_downloaded,
     })
 }
 
@@ -876,6 +932,8 @@ pub async fn run_pull_only(app: &AppHandle, pool: &SqlitePool, config: &WebdavCo
         thread_ids: pulled.thread_ids,
         books_changed: pulled.books_changed,
         notes_changed: pulled.notes_changed,
+        fonts_downloaded: 0,
+        backgrounds_downloaded: 0,
     })
 }
 

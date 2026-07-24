@@ -106,6 +106,10 @@ export interface SyncRunResult {
   books_changed: boolean;
   /** notes/book_notes 表有变更（划线/笔记需刷新） */
   notes_changed: boolean;
+  /** 本轮下载的字体数 */
+  fonts_downloaded: number;
+  /** 本轮下载的背景图数 */
+  backgrounds_downloaded: number;
 }
 
 export async function syncGetL2Status(): Promise<L2Status> {
@@ -125,4 +129,96 @@ export async function syncPullNow(): Promise<SyncRunResult> {
 /** 是否有未推送的本地变更（纯本地查询，无网络请求） */
 export async function syncHasUnpushed(): Promise<boolean> {
   return invoke("sync_has_unpushed");
+}
+
+/* ---------------- L2 书籍文件通道 ---------------- */
+
+export interface FileEntry {
+  sha256: string;
+  size: number;
+  format: string;
+  title: string;
+  uploaded_by: string;
+  uploaded_at: number;
+}
+
+export interface CloudBookInfo {
+  book_id: string;
+  title: string;
+  format: string;
+  size: number;
+  sha256: string;
+  local_exists: boolean;
+}
+
+export interface UploadAllResult {
+  total: number;
+  uploaded: number;
+  skipped: number;
+  failed: number;
+  first_error: string | null;
+}
+
+/** 上传单本书的文件到云端 */
+export async function syncUploadBook(bookId: string): Promise<FileEntry> {
+  return invoke("sync_upload_book", { bookId });
+}
+
+/** 下载单本书的文件（懒加载） */
+export async function syncDownloadBook(bookId: string): Promise<string> {
+  return invoke("sync_download_book", { bookId });
+}
+
+/** 获取云端书目列表（含本地是否已有标记） */
+export async function syncGetCloudBooks(): Promise<CloudBookInfo[]> {
+  return invoke("sync_get_cloud_books");
+}
+
+/** 批量上传本地所有书籍文件（首次引导用） */
+export async function syncUploadAllBooks(): Promise<UploadAllResult> {
+  return invoke("sync_upload_all_books");
+}
+
+/* ---------------- L2 安全快照回滚 ---------------- */
+
+export interface SnapshotInfo {
+  name: string;
+  created_at: number;
+  size: number;
+}
+
+/** 列出 L2 同步前安全快照 */
+export async function syncListL2Snapshots(): Promise<SnapshotInfo[]> {
+  return invoke("sync_list_l2_snapshots");
+}
+
+/** 回滚到指定 L2 安全快照（重启生效） */
+export async function syncRollbackL2(name: string): Promise<string> {
+  return invoke("sync_rollback_l2", { name });
+}
+
+/* ---------------- L2 资产通道（字体/背景图） ---------------- */
+
+export interface AssetsStatus {
+  cloud_fonts: number;
+  cloud_backgrounds: number;
+  local_fonts: number;
+  local_backgrounds: number;
+}
+
+/** 资产同步状态（云端/本地的字体与背景数量） */
+export async function syncGetCloudAssets(): Promise<AssetsStatus> {
+  return invoke("sync_get_cloud_assets");
+}
+
+/* ---------------- L2 UI 配置同步（背景选择/辅助模型） ---------------- */
+
+/** 上传 UI 配置 JSON（不透明搬运） */
+export async function syncPutUiConfig(json: string): Promise<void> {
+  return invoke("sync_put_ui_config", { json });
+}
+
+/** 下载 UI 配置 JSON（不存在返回 null） */
+export async function syncGetUiConfig(): Promise<string | null> {
+  return invoke("sync_get_ui_config");
 }

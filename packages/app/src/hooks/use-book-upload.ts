@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { uploadBook } from "@/services/book-service";
 import { FILE_ACCEPT_FORMATS } from "@/services/constants";
+import { syncGetConfig, syncUploadBook } from "@/services/sync-service";
 import { useLibraryStore } from "@/store/library-store";
 import { getFilename, listFormater } from "@/utils/book";
 import { eventDispatcher } from "@/utils/event";
@@ -78,6 +79,19 @@ export function useBookUpload() {
       if (successBooks.length > 0) {
         toast.success(`成功导入 ${successBooks.length} 本书籍`);
         await refreshBooks();
+
+        // L2 开启时异步上传书籍文件到云端（不阻塞导入流程）
+        syncGetConfig()
+          .then((config) => {
+            if (config?.l2_enabled) {
+              for (const book of successBooks) {
+                syncUploadBook(book.id).catch((e) =>
+                  console.warn("书籍文件自动上传失败（忽略）:", book.title, e),
+                );
+              }
+            }
+          })
+          .catch(() => {});
       }
     },
     [refreshBooks],
