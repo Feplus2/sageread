@@ -41,6 +41,8 @@
 **阶段 3 · 联网发现与导入（1-2 天）**
 不内置任何 Python 依赖：zotero-brain 本就是 stdio MCP，SageRead 对话面板已有 tool-calling 循环（stopWhen 20 步）。把它的搜索/下载/解析工具挂进对话，用户说"搜 XX 主题近三年的论文，解析后放进书库"即闭环；解析完成 → 阶段 1 的桥自动入库。Zotero 双向（pyzotero 已通）作为可选增强。
 
+> 补充（2026-07-22 用户定调）：对话面板本质就是 Agent，直接挂现成 MCP 即可，**不做任何合并，只做格式兼容**。标志性体验："一句话把 Zotero 里的文献连同分类文件夹导入 SageRead"——Zotero collection 层级 → SageRead 标签/分组映射，解析缓存 → 阶段 1 的 EPUB 桥。
+
 ### 与 zotero-brain 的分工（不合并、不搬运）
 
 | 层 | 归属 |
