@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { createTag } from "@/services/tag-service";
+import { createTag, getTagByName } from "@/services/tag-service";
 import type { BookWithStatusAndUrls } from "@/types/simple-book";
 import { useCallback, useEffect, useState } from "react";
 import BookSelector from "./book-selector";
@@ -75,26 +75,33 @@ export default function CreateTagDialog({
       const randomColor = tagColors[Math.floor(Math.random() * tagColors.length)];
 
       // 先创建标签到数据库（无论是否选择了书籍）
+      let tagId: string | null = null;
       try {
-        await createTag({
+        const newTag = await createTag({
           name: newTagName.trim(),
           color: randomColor,
         });
+        tagId = newTag.id;
       } catch (error) {
-        // 如果标签已存在，忽略错误
+        // 如果标签已存在，查找其 ID
         console.warn("Tag already exists or creation failed:", error);
+        const existingTag = await getTagByName(newTagName.trim());
+        tagId = existingTag?.id ?? null;
       }
 
-      // 为选中的书籍添加标签
+      if (!tagId) {
+        console.error("Failed to get tag ID for:", newTagName);
+        setIsLoading(false);
+        return;
+      }
+
+      // 为选中的书籍添加标签（使用标签 ID）
       for (const bookId of selectedBooksForTag) {
         const book = books.find((b) => b.id === bookId);
         if (book) {
           const currentTags = book.tags || [];
-          const newTags = [...currentTags];
-
-          // 如果标签不存在则添加
-          if (!newTags.includes(newTagName.trim())) {
-            newTags.push(newTagName.trim());
+          if (!currentTags.includes(tagId)) {
+            const newTags = [...currentTags, tagId];
             await onBookUpdate(bookId, { tags: newTags });
           }
         }

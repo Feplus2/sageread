@@ -341,3 +341,25 @@ foliate-view {
       1px 1px 3px 0 rgba(0, 0, 0, 0.15);
   }
 }
+
+/* ---------- Sonner toast 主题接管 ----------
+ * Sonner 内部写死了 --gray* 色阶和 [data-description] 颜色，
+ * 不响应应用主题变量。以下规则用更高优先级将其收编。 */
+[data-sonner-toaster] {
+  --gray1: var(--popover);
+  --gray2: var(--muted);
+  --gray3: var(--muted);
+  --gray4: var(--border);
+  --gray5: var(--border);
+  --gray6: var(--border);
+  --gray7: var(--muted-foreground);
+  --gray8: var(--muted-foreground);
+  --gray9: var(--muted-foreground);
+  --gray10: var(--muted-foreground);
+  --gray11: var(--muted-foreground);
+  --gray12: var(--foreground);
+}
+
+[data-sonner-toast][data-styled='true'] [data-description] {
+  color: var(--muted-foreground) !important;
+}
