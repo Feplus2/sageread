@@ -10,6 +10,8 @@ export interface Tab extends TabProperties {
   bookId: string;
 }
 
+export type TabOrientation = "horizontal" | "vertical";
+
 interface LayoutStore {
   tabs: Tab[];
   activeTabId: string | null;
@@ -19,14 +21,20 @@ interface LayoutStore {
   isChatVisible: boolean;
   isNotepadVisible: boolean;
 
+  tabOrientation: TabOrientation;
+  isVerticalTabCollapsed: boolean;
+
   openBook: (bookId: string, title: string) => void;
   removeTab: (tabId: string) => void;
   activateTab: (tabId: string) => void;
   navigateToHome: () => void;
   updateTab: (tabId: string, updates: Partial<Tab>) => void;
+  reorderTab: (tabId: string, fromIndex: number, toIndex: number) => void;
   getReaderStore: (tabId: string) => ReaderStore | undefined;
   toggleChatSidebar: () => void;
   toggleNotepadSidebar: () => void;
+  toggleTabOrientation: () => void;
+  toggleVerticalTabCollapsed: () => void;
 }
 
 export const useLayoutStore = create<LayoutStore>()(
@@ -38,6 +46,8 @@ export const useLayoutStore = create<LayoutStore>()(
       readerStores: new Map(),
       isChatVisible: true,
       isNotepadVisible: false,
+      tabOrientation: "horizontal",
+      isVerticalTabCollapsed: false,
 
       openBook: (bookId: string, title: string) => {
         const tabId = `reader-${bookId}`;
@@ -132,6 +142,17 @@ export const useLayoutStore = create<LayoutStore>()(
         });
       },
 
+      reorderTab: (tabId: string, fromIndex: number, toIndex: number) => {
+        const { tabs } = get();
+        if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= tabs.length) return;
+        const newTabs = [...tabs];
+        const [moved] = newTabs.splice(fromIndex, 1);
+        if (!moved) return;
+        const clampedTo = Math.max(0, Math.min(toIndex, newTabs.length));
+        newTabs.splice(clampedTo, 0, moved);
+        set({ tabs: newTabs });
+      },
+
       getReaderStore: (tabId: string) => {
         return get().readerStores.get(tabId);
       },
@@ -143,6 +164,14 @@ export const useLayoutStore = create<LayoutStore>()(
       toggleNotepadSidebar: () => {
         set({ isNotepadVisible: !get().isNotepadVisible });
       },
+
+      toggleTabOrientation: () => {
+        set({ tabOrientation: get().tabOrientation === "horizontal" ? "vertical" : "horizontal" });
+      },
+
+      toggleVerticalTabCollapsed: () => {
+        set({ isVerticalTabCollapsed: !get().isVerticalTabCollapsed });
+      },
     }),
     {
       name: tauriStorageKey.layoutStore,
@@ -153,6 +182,8 @@ export const useLayoutStore = create<LayoutStore>()(
         isHomeActive: state.isHomeActive,
         isChatVisible: state.isChatVisible,
         isNotepadVisible: state.isNotepadVisible,
+        tabOrientation: state.tabOrientation,
+        isVerticalTabCollapsed: state.isVerticalTabCollapsed,
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as any;
@@ -174,6 +205,8 @@ export const useLayoutStore = create<LayoutStore>()(
           isHomeActive: persisted?.isHomeActive ?? true,
           isChatVisible: persisted?.isChatVisible ?? true,
           isNotepadVisible: persisted?.isNotepadVisible ?? false,
+          tabOrientation: persisted?.tabOrientation === "vertical" ? "vertical" : "horizontal",
+          isVerticalTabCollapsed: persisted?.isVerticalTabCollapsed ?? false,
           readerStores,
         } as LayoutStore;
       },

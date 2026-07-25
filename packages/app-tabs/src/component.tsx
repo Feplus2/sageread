@@ -3,7 +3,6 @@ import type React from "react";
 import { useEffect, useRef } from "react";
 import type { TabProperties } from "./chrome-tabs";
 import { type Listeners, useChromeTabs } from "./hooks/useChromeTabs";
-import { useLatest } from "./hooks/useLatest";
 import { usePersistFn } from "./hooks/usePersistFn";
 import { usePrevious } from "./hooks/usePrevious";
 
@@ -34,14 +33,13 @@ export function Tabs({
   enableDragRegion,
   marginLeft,
 }: TabsProps) {
-  const tabsLatest = useLatest(tabs);
   const previousTabs = usePrevious(tabs);
 
   const moveIndex = useRef({ tabId: "", fromIndex: -1, toIndex: -1 });
 
   const handleTabReorder = usePersistFn((tabId: string, fromIndex: number, toIndex: number) => {
-    const [dest] = tabsLatest.current.splice(fromIndex, 1);
-    tabsLatest.current.splice(toIndex, 0, dest);
+    // 只累积移动信息，不修改外部 tabs 数组；dragEnd 时上报 (原始 fromIndex, 最终 toIndex)，
+    // 由消费方（store）统一做不可变更新
     const beforeFromIndex = moveIndex.current.fromIndex;
     moveIndex.current = {
       tabId,
@@ -105,5 +103,14 @@ export function Tabs({
       }
     }
   }, [tabs]);
-  return <ChromeTabs className={className} darkMode={darkMode} toolbar={toolbar} pinnedLeft={pinnedLeft} enableDragRegion={enableDragRegion} marginLeft={marginLeft} />;
+  return (
+    <ChromeTabs
+      className={className}
+      darkMode={darkMode}
+      toolbar={toolbar}
+      pinnedLeft={pinnedLeft}
+      enableDragRegion={enableDragRegion}
+      marginLeft={marginLeft}
+    />
+  );
 }

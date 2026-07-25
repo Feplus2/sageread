@@ -1,5 +1,5 @@
 import Draggabilly from "draggabilly";
-import { inBrowser, inRange, requestAnimationFrameAsync, sum } from "./utils/util";
+import { inBrowser, requestAnimationFrameAsync, sum } from "./utils/util";
 
 const TAB_CONTENT_MARGIN = 4;
 const TAB_CONTENT_OVERLAP_DISTANCE = -24;
@@ -55,7 +55,6 @@ export interface TabProperties {
   faviconClass?: string;
   isCloseIconVisible?: boolean;
 }
-inRange;
 
 let instanceId = 0;
 
@@ -72,6 +71,8 @@ class ChromeTabs {
   draggabillyDragging: any;
   isMouseEnter = false;
   mouseEnterLayoutResolve: null | (() => void) = null;
+  scrollBtnLeft: HTMLDivElement | null = null;
+  scrollBtnRight: HTMLDivElement | null = null;
 
   private draggable = true;
   constructor({ draggable = true }: ChromeTabsOptions = {}) {
@@ -97,6 +98,7 @@ class ChromeTabs {
 
     this.setupCustomProperties();
     this.setupStyleEl();
+    this.setupScrollButtons();
     this.setupEvents();
     this.layoutTabs();
     this.setDraggable(this.draggable);
@@ -113,6 +115,34 @@ class ChromeTabs {
   setupStyleEl() {
     this.styleEl = document.createElement("style");
     this.el.appendChild(this.styleEl);
+  }
+
+  setupScrollButtons() {
+    const chevronLeft = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
+    const chevronRight = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+    this.scrollBtnLeft = document.createElement("div");
+    this.scrollBtnLeft.className = "chrome-tabs-scroll-btn chrome-tabs-scroll-btn-left";
+    this.scrollBtnLeft.innerHTML = chevronLeft;
+    this.scrollBtnLeft.setAttribute("hidden", "");
+    this.scrollBtnLeft.addEventListener("mousedown", (e) => e.stopPropagation());
+    this.scrollBtnLeft.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.scrollBy(-200);
+    });
+
+    this.scrollBtnRight = document.createElement("div");
+    this.scrollBtnRight.className = "chrome-tabs-scroll-btn chrome-tabs-scroll-btn-right";
+    this.scrollBtnRight.innerHTML = chevronRight;
+    this.scrollBtnRight.setAttribute("hidden", "");
+    this.scrollBtnRight.addEventListener("mousedown", (e) => e.stopPropagation());
+    this.scrollBtnRight.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.scrollBy(200);
+    });
+
+    this.el.appendChild(this.scrollBtnLeft);
+    this.el.appendChild(this.scrollBtnRight);
   }
 
   translateX = 0;
@@ -135,22 +165,20 @@ class ChromeTabs {
     document.addEventListener("visibilitychange", this.onMouseLeave);
 
     this.tabEls.forEach((tabEl) => this.setTabCloseEventListener(tabEl));
-    this.tabContentEl.addEventListener("wheel", (event) => {
-      const tabsWidth = this.getTabsWidth();
-      const clientWidth = this.tabContentEl.clientWidth;
-      if (clientWidth >= tabsWidth) {
-        this.translateX = 0;
-      } else {
-        const sign = event.deltaY > 0 ? 1 : -1;
-        const delta = (sign * (tabsWidth - clientWidth)) / 3;
-        this.translateX = Math.min(0, Math.max(this.translateX - delta, clientWidth - tabsWidth));
-      }
-      this.tabContentEl.style.transform = `translateX(${this.translateX}px)`;
-    });
+    this.viewportEl.addEventListener(
+      "wheel",
+      (event) => {
+        event.preventDefault();
+        const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+        this.scrollBy(delta);
+      },
+      { passive: false },
+    );
     this.el.addEventListener("activeTabChange", async () => {
       await this.layoutPromise; // Wait for the layout to finish
       this.translateToView();
     });
+    this.updateScrollButtons();
   }
 
   onResize = () => {
@@ -172,6 +200,11 @@ class ChromeTabs {
 
   get tabContentEl() {
     return this.el.querySelector(".chrome-tabs-content")! as HTMLDivElement;
+  }
+
+  /** 静止裁剪视口：其 clientWidth 即可见标签区宽度 */
+  get viewportEl() {
+    return (this.el.querySelector(".chrome-tabs-viewport") || this.tabContentEl) as HTMLDivElement;
   }
 
   get toolbarEl() {
@@ -259,6 +292,7 @@ class ChromeTabs {
     });
     this.styleEl.innerHTML = styleHTML;
     await this.justifyContentWidth();
+    this.updateScrollButtons();
   }
 
   layoutPromise = null as Promise<void> | null;
@@ -281,23 +315,70 @@ class ChromeTabs {
     this.tabContentEl.style.width = `${this.getTabsWidth()}px`;
   }
 
+  /** 按像素滚动标签内容区，delta > 0 向左滚（显示右侧标签） */
+  scrollBy(delta: number) {
+    const tabsWidth = this.getTabsWidth();
+    const clientWidth = this.viewportEl.clientWidth;
+    if (clientWidth >= tabsWidth) {
+      this.translateX = 0;
+    } else {
+      this.translateX = Math.min(0, Math.max(this.translateX - delta, clientWidth - tabsWidth));
+    }
+    this.tabContentEl.style.transform = `translateX(${this.translateX}px)`;
+    this.updateScrollButtons();
+  }
+
+  /** 根据当前滚动位置更新左右箭头按钮的可见性与定位 */
+  updateScrollButtons() {
+    if (!this.scrollBtnLeft || !this.scrollBtnRight) return;
+    const tabsWidth = this.getTabsWidth();
+    const clientWidth = this.viewportEl.clientWidth;
+    const canScrollLeft = this.translateX < -1;
+    const canScrollRight = clientWidth < tabsWidth && this.translateX > clientWidth - tabsWidth + 1;
+
+    if (canScrollLeft) {
+      this.scrollBtnLeft.removeAttribute("hidden");
+    } else {
+      this.scrollBtnLeft.setAttribute("hidden", "");
+    }
+    if (canScrollRight) {
+      this.scrollBtnRight.removeAttribute("hidden");
+    } else {
+      this.scrollBtnRight.setAttribute("hidden", "");
+    }
+
+    const leftOffset = (this.toolbarLeftEl?.clientWidth || 0) + 2;
+    const rightOffset = (this.toolbarEl?.clientWidth || 0) + 10;
+    this.scrollBtnLeft.style.left = `${leftOffset}px`;
+    this.scrollBtnRight.style.right = `${rightOffset}px`;
+  }
+
   async translateToView() {
     await requestAnimationFrameAsync();
     const tabsWidth = this.getTabsWidth();
-    const tabWidth = tabsWidth / this.tabEls.length;
-    const clientWidth = this.tabContentEl.clientWidth;
+    const clientWidth = this.viewportEl.clientWidth;
     const index = this.tabEls.indexOf(this.activeTabEl);
     if (index === -1) return;
     if (clientWidth >= tabsWidth) {
       this.translateX = 0;
     } else {
-      const currentX = index * tabWidth;
-      const left = Math.max(-currentX, clientWidth - tabsWidth);
-      const right = Math.max(-currentX + tabWidth, clientWidth - tabsWidth);
-      const isInRange = inRange(this.translateX, left, right);
-      this.translateX = Math.min(0, isInRange ? this.translateX : (left + right) / 2);
+      // 用实际布局位置计算激活标签边界，最小滚动使其完整可见
+      const positions = this.tabPositions;
+      const widths = this.tabContentWidths;
+      const tabLeft = positions[index];
+      const tabRight = tabLeft + widths[index] + 2 * TAB_CONTENT_MARGIN;
+      const viewLeft = -this.translateX;
+      const viewRight = viewLeft + clientWidth;
+
+      if (tabLeft < viewLeft) {
+        this.translateX = -(tabLeft - TAB_CONTENT_MARGIN);
+      } else if (tabRight > viewRight) {
+        this.translateX = -(tabRight - clientWidth + TAB_CONTENT_MARGIN);
+      }
+      this.translateX = Math.min(0, Math.max(this.translateX, clientWidth - tabsWidth));
     }
     this.tabContentEl.style.transform = `translateX(${this.translateX}px)`;
+    this.updateScrollButtons();
   }
 
   createNewTabEl() {
@@ -311,8 +392,20 @@ class ChromeTabs {
     tabEl.oncontextmenu = (event) => {
       this.emit("contextmenu", { tabEl, event });
     };
-    tabEl.addEventListener("mousedown", () => {
-      this.emit("tabClick", { tabEl });
+    tabEl.addEventListener("mousedown", (e) => {
+      if (e.button === 1) {
+        e.preventDefault(); // 阻止浏览器自动滚动光标
+        return;
+      }
+      if (e.button === 0) {
+        this.emit("tabClick", { tabEl });
+      }
+    });
+    tabEl.addEventListener("auxclick", (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        this.emit("tabClose", { tabEl });
+      }
     });
     if (animate) {
       tabEl.classList.add("chrome-tab-was-just-added");
@@ -484,18 +577,20 @@ class ChromeTabs {
         const tabContent = tabEl.querySelector(".chrome-tab-content")!;
         const right = currentTabPositionX + tabContent.clientWidth;
 
-        const overLeft = currentTabPositionX < -2;
-        const overRight = right > this.tabContentEl.clientWidth;
+        const viewLeft = -this.translateX;
+        const viewRight = viewLeft + this.viewportEl.clientWidth;
+        const overLeft = currentTabPositionX < viewLeft - 2;
+        const overRight = right > viewRight;
         // trick to prevent the tab from being dragged out of the tab bar
         // @see https://github.com/desandro/draggabilly/issues/177#issuecomment-357270225
         if (overLeft || overRight) {
           draggabilly.off("dragMove", handleDragMove);
           let x: number;
           if (overLeft) {
-            x = -originalTabPositionX;
+            x = viewLeft - originalTabPositionX;
           } else {
             const RADIUS = 8;
-            const delta = right - this.tabContentEl.clientWidth + RADIUS;
+            const delta = right - viewRight + RADIUS;
             x = moveVector.x - delta;
           }
           (draggabilly as any)._dragMove(event as any, pointer, {
@@ -533,6 +628,10 @@ class ChromeTabs {
       window.removeEventListener("resize", this.onResize);
     }
     document.removeEventListener("visibilitychange", this.onMouseLeave);
+    this.scrollBtnLeft?.remove();
+    this.scrollBtnRight?.remove();
+    this.scrollBtnLeft = null;
+    this.scrollBtnRight = null;
   }
 }
 

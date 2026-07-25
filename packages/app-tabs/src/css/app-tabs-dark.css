@@ -48,3 +48,16 @@
 .chrome-tabs.chrome-tabs-dark-theme .chrome-tabs-bottom-bar {
   display: none;
 }
+.chrome-tabs.chrome-tabs-dark-theme .chrome-tabs-scroll-btn {
+  background: var(--color-neutral-800);
+  border-color: var(--color-neutral-700);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  color: var(--color-neutral-400);
+}
+.chrome-tabs.chrome-tabs-dark-theme .chrome-tabs-scroll-btn:hover {
+  background: var(--color-neutral-700);
+  color: var(--color-neutral-200);
+}
+.chrome-tabs.chrome-tabs-dark-theme .chrome-tabs-scroll-btn:active {
+  background: var(--color-neutral-600);
+}

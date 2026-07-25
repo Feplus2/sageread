@@ -40,18 +40,29 @@ const ChromeTabsWrapper = forwardRef<
       className={classList.join(" ")}
       {...dragRegionProps}
       style={
-        { "--tab-content-margin": "9px", marginLeft: `${marginLeft}px`, display: "flex", position: "relative" } as CSSProperties
+        {
+          "--tab-content-margin": "9px",
+          marginLeft: `${marginLeft}px`,
+          display: "flex",
+          position: "relative",
+        } as CSSProperties
       }
     >
-      <div className="chrome-tabs-toolbar-left" style={{ zIndex: 1, position: "relative", flexShrink: 0 }}>
+      <div className="chrome-tabs-toolbar-left" style={{ zIndex: 2, position: "relative", flexShrink: 0 }}>
         {props.pinnedLeft || null}
       </div>
+      {/* 静止裁剪视口：标签滚出此区域即被切掉，永不与两侧固定按钮重叠/误触 */}
       <div
-        className="chrome-tabs-content"
+        className="chrome-tabs-viewport"
         {...dragRegionProps}
-        style={{ flex: 1, zIndex: 1, position: "relative", minWidth: 0 }}
-      />
-      <div className="chrome-tabs-toolbar-right" style={{ zIndex: 1, position: "relative", paddingLeft: "8px", flexShrink: 0 }}>
+        style={{ zIndex: 1, flex: 1, minWidth: 0, height: "100%", position: "relative", overflow: "hidden" }}
+      >
+        <div className="chrome-tabs-content" {...dragRegionProps} style={{ zIndex: 1 }} />
+      </div>
+      <div
+        className="chrome-tabs-toolbar-right"
+        style={{ zIndex: 2, position: "relative", paddingLeft: "8px", flexShrink: 0 }}
+      >
         {props.toolbar || null}
       </div>
       {/* <div className="chrome-tabs-bottom-bar" /> */}
@@ -211,6 +222,8 @@ export function useChromeTabs(listeners: Listeners, options: ChromeTabsOptions =
     darkMode?: boolean;
     toolbar?: React.ReactNode;
     pinnedLeft?: React.ReactNode;
+    enableDragRegion?: boolean;
+    marginLeft?: number;
   }) {
     return <ChromeTabsWrapper {...props} ref={ref} />;
   }, []);

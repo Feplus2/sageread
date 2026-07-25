@@ -3,6 +3,7 @@ import { NotepadContainer } from "@/components/notepad";
 import NotificationDropdown from "@/components/notification-dropdown";
 import SettingsDialog from "@/components/settings/settings-dialog";
 import SideChat from "@/components/side-chat";
+import VerticalTabBar from "@/components/vertical-tab-bar";
 import WindowControls from "@/components/window-controls";
 import { useFontEvents } from "@/hooks/use-font-events";
 import ReaderViewer from "@/pages/reader";
@@ -23,7 +24,7 @@ import { useThemeStore } from "@/store/theme-store";
 import { getOSPlatform } from "@/utils/misc";
 import { useQueryClient } from "@tanstack/react-query";
 import { Tabs } from "app-tabs";
-import { HomeIcon } from "lucide-react";
+import { HomeIcon, PanelLeft } from "lucide-react";
 import { Resizable } from "re-resizable";
 import { useEffect, useRef, useState } from "react";
 
@@ -37,9 +38,12 @@ export default function ReaderLayout() {
     removeTab,
     activateTab,
     navigateToHome,
+    reorderTab,
     getReaderStore,
     isChatVisible,
     isNotepadVisible,
+    tabOrientation,
+    toggleTabOrientation,
   } = useLayoutStore();
   const { isDarkMode, swapSidebars } = useThemeStore();
   const { isSettingsDialogOpen, toggleSettingsDialog } = useAppSettingsStore();
@@ -49,6 +53,9 @@ export default function ReaderLayout() {
   const [showOverlay, setShowOverlay] = useState(false);
 
   const isWindows = getOSPlatform() === "windows";
+  const isVertical = tabOrientation === "vertical";
+  // 侧边栏高度：横向模式标签栏 36px，纵向模式窄顶条 32px，另加 main 的 p-1 和余量
+  const sidebarHeightClass = isVertical ? "h-[calc(100dvh-44px)]" : "h-[calc(100dvh-48px)]";
 
   // 启动时应用持久化的全局主题（值来自 localStorage 同步读取，无异步恢复闪烁）
   useEffect(() => {
@@ -100,7 +107,9 @@ export default function ReaderLayout() {
     let onlineCleanup: (() => void) | null = null;
 
     // 空闲检测：监听用户交互事件
-    const markActive = () => { lastInteraction = Date.now(); };
+    const markActive = () => {
+      lastInteraction = Date.now();
+    };
     const interactionEvents = ["click", "keydown", "wheel", "touchstart"] as const;
     for (const evt of interactionEvents) {
       window.addEventListener(evt, markActive, { passive: true });
@@ -233,169 +242,189 @@ export default function ReaderLayout() {
 
   return (
     <div className="flex h-screen flex-col bg-muted">
-      <div
-        data-region="reader-tabs"
-        className="select-none border-neutral-200 dark:border-neutral-700 dark:bg-tab-background"
-      >
-        <Tabs
-          tabs={tabs}
-          onTabActive={activateTab}
-          onTabClose={removeTab}
-          onTabReorder={() => {}}
-          draggable={true}
-          darkMode={isDarkMode}
-          className="h-7"
-          enableDragRegion={true}
-          marginLeft={isWindows ? 0 : 60}
-          pinnedLeft={
-            <div className="mx-2 flex items-center gap-2" onClick={navigateToHome}>
-              <HomeIcon className="size-5 text-neutral-700 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200" />
-            </div>
-          }
-          pinnedRight={
-            <div className="flex items-center gap-1">
-              <NotificationDropdown />
-              <WindowControls />
-            </div>
-          }
-        />
-      </div>
-
-      <main className="relative flex-1 overflow-hidden rounded-md">
+      {isVertical ? (
         <div
-          className="absolute inset-0"
-          style={{
-            visibility: isHomeActive ? "visible" : "hidden",
-            zIndex: isHomeActive ? 1 : 0,
-          }}
+          data-tauri-drag-region
+          className="flex h-8 shrink-0 select-none items-center justify-end gap-1 pr-1 dark:bg-tab-background"
+          style={isWindows ? undefined : { paddingLeft: 70 }}
         >
-          <HomeLayout />
+          <NotificationDropdown />
+          <WindowControls />
         </div>
-
-        {tabs.map((tab) => {
-          const store = getReaderStore(tab.id);
-          if (!store) return null;
-
-          const notepadSidebar = isNotepadVisible && (
-            <Resizable
-              defaultSize={{
-                width: 300,
-                height: "100%",
-              }}
-              minWidth={260}
-              maxWidth={500}
-              enable={{
-                top: false,
-                right: !swapSidebars,
-                bottom: false,
-                left: swapSidebars,
-                topRight: false,
-                bottomRight: false,
-                bottomLeft: false,
-                topLeft: false,
-              }}
-              handleComponent={
-                swapSidebars
-                  ? { left: <div className="custom-resize-handle" /> }
-                  : { right: <div className="custom-resize-handle custom-resize-handle-left" /> }
-              }
-              className="h-full"
-              onResize={() => {
-                if (!showOverlay) {
-                  setShowOverlay(true);
-                }
-              }}
-              onResizeStop={() => {
-                setShowOverlay(false);
-                window.dispatchEvent(
-                  new CustomEvent("foliate-resize-update", {
-                    detail: { bookId: tab.bookId, source: "resize-drag" },
-                  }),
-                );
-              }}
-            >
-              <div
-                data-region="notepad-panel"
-                className={swapSidebars ? "ml-1 h-[calc(100dvh-48px)]" : "mr-1 h-[calc(100dvh-48px)]"}
-              >
-                <NotepadContainer bookId={tab.bookId} />
+      ) : (
+        <div
+          data-region="reader-tabs"
+          className="select-none border-neutral-200 dark:border-neutral-700 dark:bg-tab-background"
+        >
+          <Tabs
+            tabs={tabs}
+            onTabActive={activateTab}
+            onTabClose={removeTab}
+            onTabReorder={reorderTab}
+            draggable={true}
+            darkMode={isDarkMode}
+            className="h-7"
+            enableDragRegion={true}
+            marginLeft={isWindows ? 0 : 60}
+            pinnedLeft={
+              <div className="mx-2 flex items-center gap-2">
+                <div className="cursor-pointer" onClick={navigateToHome}>
+                  <HomeIcon className="size-5 text-neutral-700 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200" />
+                </div>
+                <div className="cursor-pointer" onClick={toggleTabOrientation} title="切换到垂直标签">
+                  <PanelLeft className="size-5 text-neutral-700 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200" />
+                </div>
               </div>
-            </Resizable>
-          );
-
-          const chatSidebar = isChatVisible && (
-            <Resizable
-              defaultSize={{
-                width: 370,
-                height: "100%",
-              }}
-              minWidth={320}
-              maxWidth={580}
-              enable={{
-                top: false,
-                right: swapSidebars,
-                bottom: false,
-                left: !swapSidebars,
-                topRight: false,
-                bottomRight: false,
-                bottomLeft: false,
-                topLeft: false,
-              }}
-              handleComponent={
-                swapSidebars
-                  ? { right: <div className="custom-resize-handle custom-resize-handle-left" /> }
-                  : { left: <div className="custom-resize-handle" /> }
-              }
-              className="h-full"
-              onResize={() => {
-                if (!showOverlay) {
-                  setShowOverlay(true);
-                }
-              }}
-              onResizeStop={() => {
-                setShowOverlay(false);
-                window.dispatchEvent(
-                  new CustomEvent("foliate-resize-update", {
-                    detail: { bookId: tab.bookId, source: "resize-drag" },
-                  }),
-                );
-              }}
-            >
-              <div
-                className={
-                  swapSidebars ? "mr-1 h-[calc(100dvh-48px)] rounded-md" : "m-1 mt-0 h-[calc(100dvh-48px)] rounded-md"
-                }
-              >
-                <SideChat key={`chat-${tab.id}`} bookId={tab.bookId} />
+            }
+            pinnedRight={
+              <div className="flex items-center gap-1">
+                <NotificationDropdown />
+                <WindowControls />
               </div>
-            </Resizable>
-          );
+            }
+          />
+        </div>
+      )}
 
-          return (
-            <ReaderProvider store={store} key={tab.id}>
-              <div
-                className="absolute inset-0 flex bg-background p-1"
-                style={{
-                  visibility: tab.id === activeTabId ? "visible" : "hidden",
-                  zIndex: tab.id === activeTabId ? 1 : 0,
+      <div className="flex min-h-0 flex-1">
+        {isVertical && <VerticalTabBar />}
+
+        <main className="relative flex-1 overflow-hidden rounded-md">
+          <div
+            className="absolute inset-0"
+            style={{
+              visibility: isHomeActive ? "visible" : "hidden",
+              zIndex: isHomeActive ? 1 : 0,
+            }}
+          >
+            <HomeLayout />
+          </div>
+
+          {tabs.map((tab) => {
+            const store = getReaderStore(tab.id);
+            if (!store) return null;
+
+            const notepadSidebar = isNotepadVisible && (
+              <Resizable
+                defaultSize={{
+                  width: 300,
+                  height: "100%",
+                }}
+                minWidth={260}
+                maxWidth={500}
+                enable={{
+                  top: false,
+                  right: !swapSidebars,
+                  bottom: false,
+                  left: swapSidebars,
+                  topRight: false,
+                  bottomRight: false,
+                  bottomLeft: false,
+                  topLeft: false,
+                }}
+                handleComponent={
+                  swapSidebars
+                    ? { left: <div className="custom-resize-handle" /> }
+                    : { right: <div className="custom-resize-handle custom-resize-handle-left" /> }
+                }
+                className="h-full"
+                onResize={() => {
+                  if (!showOverlay) {
+                    setShowOverlay(true);
+                  }
+                }}
+                onResizeStop={() => {
+                  setShowOverlay(false);
+                  window.dispatchEvent(
+                    new CustomEvent("foliate-resize-update", {
+                      detail: { bookId: tab.bookId, source: "resize-drag" },
+                    }),
+                  );
                 }}
               >
-                {swapSidebars ? chatSidebar : notepadSidebar}
-
-                <div className="relative flex-1 rounded-md border shadow-around">
-                  <ReaderViewer />
-
-                  {showOverlay && (
-                    <div className="absolute inset-0 z-50 flex items-center justify-center rounded-md bg-background/80 backdrop-blur-sm dark:bg-neutral-900/60" />
-                  )}
+                <div
+                  data-region="notepad-panel"
+                  className={swapSidebars ? `ml-1 ${sidebarHeightClass}` : `mr-1 ${sidebarHeightClass}`}
+                >
+                  <NotepadContainer bookId={tab.bookId} />
                 </div>
+              </Resizable>
+            );
 
-                {swapSidebars ? notepadSidebar : chatSidebar}
-              </div>
-            </ReaderProvider>
-          );
-        })}
-      </main>
+            const chatSidebar = isChatVisible && (
+              <Resizable
+                defaultSize={{
+                  width: 370,
+                  height: "100%",
+                }}
+                minWidth={320}
+                maxWidth={580}
+                enable={{
+                  top: false,
+                  right: swapSidebars,
+                  bottom: false,
+                  left: !swapSidebars,
+                  topRight: false,
+                  bottomRight: false,
+                  bottomLeft: false,
+                  topLeft: false,
+                }}
+                handleComponent={
+                  swapSidebars
+                    ? { right: <div className="custom-resize-handle custom-resize-handle-left" /> }
+                    : { left: <div className="custom-resize-handle" /> }
+                }
+                className="h-full"
+                onResize={() => {
+                  if (!showOverlay) {
+                    setShowOverlay(true);
+                  }
+                }}
+                onResizeStop={() => {
+                  setShowOverlay(false);
+                  window.dispatchEvent(
+                    new CustomEvent("foliate-resize-update", {
+                      detail: { bookId: tab.bookId, source: "resize-drag" },
+                    }),
+                  );
+                }}
+              >
+                <div
+                  className={
+                    swapSidebars ? `mr-1 ${sidebarHeightClass} rounded-md` : `m-1 mt-0 ${sidebarHeightClass} rounded-md`
+                  }
+                >
+                  <SideChat key={`chat-${tab.id}`} bookId={tab.bookId} />
+                </div>
+              </Resizable>
+            );
+
+            return (
+              <ReaderProvider store={store} key={tab.id}>
+                <div
+                  className="absolute inset-0 flex bg-background p-1"
+                  style={{
+                    visibility: tab.id === activeTabId ? "visible" : "hidden",
+                    zIndex: tab.id === activeTabId ? 1 : 0,
+                  }}
+                >
+                  {swapSidebars ? chatSidebar : notepadSidebar}
+
+                  <div className="relative flex-1 rounded-md border shadow-around">
+                    <ReaderViewer />
+
+                    {showOverlay && (
+                      <div className="absolute inset-0 z-50 flex items-center justify-center rounded-md bg-background/80 backdrop-blur-sm dark:bg-neutral-900/60" />
+                    )}
+                  </div>
+
+                  {swapSidebars ? notepadSidebar : chatSidebar}
+                </div>
+              </ReaderProvider>
+            );
+          })}
+        </main>
+      </div>
 
       <SettingsDialog open={isSettingsDialogOpen} onOpenChange={toggleSettingsDialog} />
     </div>
