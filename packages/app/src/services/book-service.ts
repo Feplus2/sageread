@@ -23,7 +23,7 @@ import { partialMD5 } from "@/utils/md5";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { appDataDir, tempDir } from "@tauri-apps/api/path";
 import { join } from "@tauri-apps/api/path";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { writeFile, readFile } from "@tauri-apps/plugin-fs";
 
 export async function uploadBook(file: File): Promise<SimpleBook> {
   try {
@@ -42,18 +42,13 @@ export async function uploadBook(file: File): Promise<SimpleBook> {
 
     let coverTempFilePath: string | undefined;
     if (format === "EPUB") {
-      try {
-        const bookDoc = await parseEpubFile(fileData, file.name);
-        const coverBlob = await bookDoc.getCover();
-        if (coverBlob) {
-          const coverTempFileName = `cover_${bookHash}.jpg`;
-          const coverTempPath = await join(tempDirPath, coverTempFileName);
-          const coverArrayBuffer = await coverBlob.arrayBuffer();
-          await writeFile(coverTempPath, new Uint8Array(coverArrayBuffer));
-          coverTempFilePath = coverTempPath;
-        }
-      } catch (e) {
-        console.warn("无法提取封面:", e);
+      const coverBlob = await extractCoverBlob(fileData, file.name);
+      if (coverBlob) {
+        const coverTempFileName = `cover_${bookHash}.jpg`;
+        const coverTempPath = await join(tempDirPath, coverTempFileName);
+        const coverArrayBuffer = await coverBlob.arrayBuffer();
+        await writeFile(coverTempPath, new Uint8Array(coverArrayBuffer));
+        coverTempFilePath = coverTempPath;
       }
     }
 
@@ -97,6 +92,39 @@ async function extractMetadataOnly(file: File): Promise<any> {
       author: "Unknown",
       language: "en",
     };
+  }
+}
+
+/** 从 EPUB 数据提取封面 Blob（导入/下载重建共用；失败返回 null 不抛出） */
+export async function extractCoverBlob(fileData: ArrayBuffer, fileName: string): Promise<Blob | null> {
+  try {
+    const bookDoc = await parseEpubFile(fileData, fileName);
+    return await bookDoc.getCover();
+  } catch (e) {
+    console.warn("无法提取封面:", e);
+    return null;
+  }
+}
+
+/**
+ * 云端下载后重建封面：解析书文件提取封面，写入 books/<id>/cover.jpg（与 save_book 同款落位，
+ * cover_path 已随元数据同步指向此处）。返回相对路径；提取失败返回 undefined（不阻塞打开）。
+ */
+export async function rebuildCoverAfterDownload(bookId: string, format: string): Promise<string | undefined> {
+  if (format.toUpperCase() !== "EPUB") return undefined;
+  try {
+    const base = await appDataDir();
+    const bookFilePath = `${base}/books/${bookId}/book.${format.toLowerCase()}`;
+    const fileData = await readFile(bookFilePath);
+    const coverBlob = await extractCoverBlob(fileData.buffer as ArrayBuffer, bookFilePath);
+    if (!coverBlob) return undefined;
+
+    const coverRelPath = `books/${bookId}/cover.jpg`;
+    await writeFile(`${base}/${coverRelPath}`, new Uint8Array(await coverBlob.arrayBuffer()));
+    return coverRelPath;
+  } catch (e) {
+    console.warn("下载后重建封面失败（忽略）:", e);
+    return undefined;
   }
 }
 

@@ -1,10 +1,16 @@
 use super::models::{BackupInfo, BackupManifest, BackupOutcome, SyncState, WebdavConfig};
 use super::{assets, backup, engine, files, restore, webdav};
 use crate::core::state::AppState;
-use sqlx::Row;
+use sqlx::{Row, SqlitePool};
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
+
+/// 取数据库连接池克隆（立即释放全局锁——锁只护句柄获取，不护后续网络 await）
+async fn clone_db_pool(state: &State<'_, AppState>) -> Result<SqlitePool, String> {
+    let guard = state.db_pool.lock().await;
+    guard.as_ref().cloned().ok_or_else(|| "数据库未初始化".to_string())
+}
 
 const CONFIG_FILE: &str = "webdav-config.json";
 
@@ -141,9 +147,8 @@ fn record_l2_failure(app: &AppHandle, error: &str) {
 #[tauri::command]
 pub async fn sync_run_now(app: AppHandle, state: State<'_, AppState>) -> Result<engine::SyncRunResult, String> {
     let config = load_config(&app)?;
-    let db_pool_guard = state.db_pool.lock().await;
-    let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
-    match engine::run_sync(&app, pool, &config).await {
+    let pool = clone_db_pool(&state).await?;
+    match engine::run_sync(&app, &pool, &config).await {
         Ok(result) => Ok(result),
         Err(error) => {
             record_l2_failure(&app, &error);
@@ -156,9 +161,8 @@ pub async fn sync_run_now(app: AppHandle, state: State<'_, AppState>) -> Result<
 #[tauri::command]
 pub async fn sync_pull_now(app: AppHandle, state: State<'_, AppState>) -> Result<engine::SyncRunResult, String> {
     let config = load_config(&app)?;
-    let db_pool_guard = state.db_pool.lock().await;
-    let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
-    match engine::run_pull_only(&app, pool, &config).await {
+    let pool = clone_db_pool(&state).await?;
+    match engine::run_pull_only(&app, &pool, &config).await {
         Ok(result) => Ok(result),
         Err(error) => {
             record_l2_failure(&app, &error);
@@ -211,12 +215,11 @@ pub async fn sync_download_book(app: AppHandle, state: State<'_, AppState>, book
     let config = load_config(&app)?;
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
-    let db_pool_guard = state.db_pool.lock().await;
-    let pool = db_pool_guard.as_ref().ok_or("数据库未初始化")?;
-
+    // 锁只护 DB：读出必要字段后即释放（clone_db_pool 不持锁），网络下载不持全局锁
+    let pool = clone_db_pool(&state).await?;
     let row = sqlx::query("SELECT file_path FROM books WHERE id = ?")
         .bind(&book_id)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| format!("查询书籍失败: {e}"))?
         .ok_or_else(|| format!("书籍不存在: {book_id}"))?;
@@ -227,8 +230,17 @@ pub async fn sync_download_book(app: AppHandle, state: State<'_, AppState>, book
     let index = files::read_files_index(&config).await?;
     let entry = index.get(&book_id).ok_or_else(|| format!("云端无此书文件: {book_id}"))?;
 
-    let path = files::download_book(&config, &app_data_dir, &book_id, &file_path, &entry.sha256).await?;
-    Ok(path.to_string_lossy().to_string())
+    log::info!("开始下载书籍: 《{}》({} bytes, sha256={})", entry.title, entry.size, &entry.sha256[..8]);
+    match files::download_book(&config, &app_data_dir, &book_id, &file_path, &entry.sha256).await {
+        Ok(path) => {
+            log::info!("书籍下载完成: 《{}》", entry.title);
+            Ok(path.to_string_lossy().to_string())
+        }
+        Err(e) => {
+            log::error!("书籍下载失败: 《{}》: {e}", entry.title);
+            Err(e)
+        }
+    }
 }
 
 /// 获取云端书目列表（含本地是否已有标记）

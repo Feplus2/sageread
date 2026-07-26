@@ -14,7 +14,7 @@ import { useModelSelector } from "@/hooks/use-model-selector";
 import type { BookTag } from "@/pages/library/hooks/use-tags-management";
 import { type AITagSuggestion, generateTagsWithAI } from "@/services/ai-tag-service";
 import { updateBookVectorizationMeta } from "@/services/book-service";
-import { type EpubIndexResult, indexEpub } from "@/services/book-service";
+import { type EpubIndexResult, indexEpub, rebuildCoverAfterDownload } from "@/services/book-service";
 import { syncDownloadBook } from "@/services/sync-service";
 import { createTag, getTags, type Tag } from "@/services/tag-service";
 import { useLayoutStore } from "@/store/layout-store";
@@ -109,6 +109,9 @@ export default function BookItem({
   const { openBook } = useLayoutStore();
   const [isCloudOnly, setIsCloudOnly] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  // 封面文件缺失（如云端下载后未重建）时回落占位渐变，而不是破图
+  const [coverBroken, setCoverBroken] = useState(false);
+  useEffect(() => setCoverBroken(false), [book.id, book.coverUrl]);
 
   // 检测书籍文件是否仅在云端（本地文件不存在）
   useEffect(() => {
@@ -129,7 +132,15 @@ export default function BookItem({
       setIsDownloading(true);
       try {
         toast.info(`正在下载《${book.title}》...`);
-        await syncDownloadBook(book.id);
+        // 150s 前端兜底超时（后端 reqwest 120s）：超时/失败清掉"下载中"并 toast 原因
+        await Promise.race([
+          syncDownloadBook(book.id),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("下载超时（150 秒），请检查网络后重试")), 150_000);
+          }),
+        ]);
+        // 下载只带书文件本体，封面按导入同款逻辑重建到 books/<id>/cover.jpg（失败不阻塞打开）
+        await rebuildCoverAfterDownload(book.id, book.format);
         setIsCloudOnly(false);
         openBook(book.id, book.title);
       } catch (error) {
@@ -141,7 +152,7 @@ export default function BookItem({
     } else {
       openBook(book.id, book.title);
     }
-  }, [book.id, book.title, isCloudOnly, openBook, selectionMode, onToggleSelect]);
+  }, [book.id, book.title, book.format, isCloudOnly, openBook, selectionMode, onToggleSelect]);
 
   const handleAIGenerateTags = useCallback(async () => {
     if (!selectedModel) {
@@ -482,8 +493,13 @@ export default function BookItem({
                 </div>
 
                 <div data-region="book-cover" className="relative aspect-[4/5] w-full overflow-hidden">
-                  {book.coverUrl ? (
-                    <img src={book.coverUrl} alt={book.title} className="h-full w-full object-cover" />
+                  {book.coverUrl && !coverBroken ? (
+                    <img
+                      src={book.coverUrl}
+                      alt={book.title}
+                      className="h-full w-full object-cover"
+                      onError={() => setCoverBroken(true)}
+                    />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-100 to-neutral-300 dark:from-neutral-700 dark:to-neutral-800">
                       <div className="p-4 text-center">

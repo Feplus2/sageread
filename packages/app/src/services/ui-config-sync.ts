@@ -1,5 +1,5 @@
 /**
- * L2 UI 配置同步：背景选择状态 + 辅助模型选择
+ * L2 UI 配置同步：背景选择状态 + 辅助模型选择 + 全局主题选择
  * 云端文件 sageread-sync/ui-config.json，整文件 LWW（按 updated_at 大者采纳）
  * 安全红线：只含 utilityModel（仅 id/名称）与 readerBackground（剔除 fileUrl），
  * 绝不同步 modelProviders（含 apiKey）。
@@ -22,6 +22,8 @@ interface UiConfig {
   updated_at: number;
   reader_background: Omit<ReaderBackground, "fileUrl"> | null;
   utility_model: SelectedModel | null;
+  /** 全局主题名（null=默认主题）。可选键：旧端读到不认识的键天然忽略（读侧 JSON.parse 宽容） */
+  global_theme?: string | null;
 }
 
 function getUpdatedAt(): number {
@@ -47,7 +49,7 @@ function setLastValues(serialized: string) {
  * 同一函数生成保证序列化键序一致，可安全做字符串对比。
  */
 function buildConfigValues(): string {
-  const { readerBackground } = useThemeStore.getState();
+  const { readerBackground, globalTheme } = useThemeStore.getState();
   const { utilityModel } = useProviderStore.getState();
 
   let bg: UiConfig["reader_background"] = null;
@@ -56,12 +58,27 @@ function buildConfigValues(): string {
     bg = rest;
   }
 
-  return JSON.stringify({ reader_background: bg, utility_model: utilityModel });
+  return JSON.stringify({ reader_background: bg, utility_model: utilityModel, global_theme: globalTheme ?? null });
 }
 
 /** 当前配置值是否与上次同步不同（即是否有真实的本地改动） */
 function hasLocalChanges(): boolean {
   return buildConfigValues() !== getLastValues();
+}
+
+/**
+ * 应用远端主题选择：复用启动注入入口（reader-layout 同款 refreshGlobalThemes + setGlobalTheme 序列）。
+ * 主题文件本地不存在时保留本地选择——setGlobalTheme 遇缺失会清选择回落默认，
+ * 直接调用会造成两端互踩（A 端主题文件未同步到 B 端时把 A 的选择也清掉）
+ */
+async function applyRemoteGlobalTheme(name: string | null): Promise<void> {
+  const store = useThemeStore.getState();
+  await store.refreshGlobalThemes();
+  if (name !== null && !useThemeStore.getState().availableGlobalThemes.some((t) => t.name === name)) {
+    console.warn(`[ui-config] 远端主题本地不存在，保留本地选择: ${name}`);
+    return;
+  }
+  await useThemeStore.getState().setGlobalTheme(name);
 }
 
 /** 把远端配置应用到本地 store（custom 背景按 fileName 重新解析 fileUrl） */
@@ -80,6 +97,10 @@ async function applyRemoteUiConfig(remote: UiConfig): Promise<void> {
 
   if (remote.utility_model !== undefined) {
     useProviderStore.getState().setUtilityModel(remote.utility_model);
+  }
+
+  if (remote.global_theme !== undefined) {
+    await applyRemoteGlobalTheme(remote.global_theme ?? null);
   }
 
   setUpdatedAt(remote.updated_at ?? 0);

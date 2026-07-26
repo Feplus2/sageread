@@ -539,6 +539,13 @@ pub async fn apply_changeset(pool: &SqlitePool, bytes: &[u8]) -> Result<ApplyOut
     let mut applied: AppliedOps = Vec::new();
     let mut tx = pool.begin().await.map_err(|e| format!("开启事务失败: {e}"))?;
 
+    // 包内行按 table+id 排序，book_notes/book_status 排在 books 之前；FK 检查延迟到提交时，
+    // 同包"父行后至"也能整体落库（提交时仍校验，真缺父行则整包回滚）
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("设置外键延迟检查失败: {e}"))?;
+
     for row in &rows {
         apply_change_row(&mut tx, row, &mut applied).await?;
     }
@@ -575,6 +582,30 @@ pub async fn apply_changeset(pool: &SqlitePool, bytes: &[u8]) -> Result<ApplyOut
     outcome.thread_ids.sort();
     outcome.thread_ids.dedup();
     Ok(outcome)
+}
+
+/* ---------------- 存量回填引导（协议 §11 2c / §13） ---------------- */
+
+/// 把 8 张同步表的全部现存行以 op=INSERT 写入 _sync_log（books 含回收站行，全保真）。
+/// 触发器只记录迁移之后的变更，存量行永远进不了 changeset——引导时回填一次，
+/// 让新设备经增量通道收到全量现状。接收端按主键 UPSERT 幂等应用，重放无害。
+/// 返回回填行数。
+pub async fn emit_bootstrap_dump(pool: &SqlitePool) -> Result<usize, String> {
+    let now = now_ms();
+    let mut total = 0usize;
+    for table in tables::TABLES {
+        // 多行 INSERT：行数可达数千，一条 SELECT 插入避免逐行往返（表名/主键均为编译期常量）
+        let sql = format!(
+            "INSERT INTO _sync_log (table_name, row_id, op, at) SELECT '{}', {}, 'INSERT', {} FROM {}",
+            table.name, table.pk, now, table.name
+        );
+        let result = sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("存量回填失败({}): {e}", table.name))?;
+        total += result.rows_affected() as usize;
+    }
+    Ok(total)
 }
 
 /* ---------------- 水位查询与日志修剪（本地+云端） ---------------- */
@@ -686,6 +717,27 @@ async fn pull_from_devices(
 ) -> Result<ApplyOutcome, String> {
     let mut outcome = ApplyOutcome::default();
     let devices = read_devices_index(config).await.unwrap_or_default();
+
+    // 新设备引导回填（协议 §11 2c）：发现他端设备（此前未为其引导过）且本地有存量书，
+    // 则全量回填一次进 _sync_log，下一轮推送周期上云；bootstrap_peers 防重复
+    let new_peers: Vec<String> = devices
+        .keys()
+        .filter(|id| *id != device_id && !state.bootstrap_peers.contains(*id))
+        .cloned()
+        .collect();
+    if !new_peers.is_empty() {
+        let book_count: i64 = sqlx::query("SELECT COUNT(*) as c FROM books")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("读取书籍数量失败: {e}"))?
+            .get("c");
+        if book_count > 0 {
+            let dumped = emit_bootstrap_dump(pool).await?;
+            state.bootstrap_peers.extend(new_peers);
+            log::info!("新设备引导：回填 {dumped} 行存量到变更日志");
+        }
+    }
+
     let mut snapshot_done = false;
     let mut watermark_changed = false;
 
@@ -782,6 +834,15 @@ pub async fn run_sync(app: &AppHandle, pool: &SqlitePool, config: &WebdavConfig)
         ],
     )
     .await?;
+
+    // 首次全量引导（协议 §11 2c）：触发器建立前的存量行回填进 _sync_log，随后走正常推送
+    if state.bootstrapped_at.is_none() {
+        let dumped = emit_bootstrap_dump(pool).await?;
+        state.bootstrapped_at = Some(now_ms());
+        // 立即持久化，避免后续网络失败导致下轮重复回填
+        super::backup::write_sync_state(&config_dir, &state)?;
+        log::info!("首次全量引导：回填 {dumped} 行存量到变更日志");
+    }
 
     // ---- 推送：本地变更打包上传 ----
     let mut pushed_rows = 0;
@@ -1521,5 +1582,205 @@ mod tests {
         assert_eq!(min_pulled_for("me", &[p_a, p_b, p_c]), 0);
         // 没有其他设备 → 0
         assert_eq!(min_pulled_for("me", &[]), 0);
+    }
+
+    async fn table_count(pool: &SqlitePool, table: &str) -> i64 {
+        sqlx::query(&format!("SELECT COUNT(*) as c FROM {table}"))
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .get("c")
+    }
+
+    /// 引导测试库：8 张同步表 + _sync_log（与线上一致的 FK），seed=true 时先插存量再建触发器
+    /// （模拟"迁移前已有数据"——这些行靠触发器永远进不了 changeset）
+    async fn bootstrap_pool(seed: bool) -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        for ddl in [
+            "CREATE TABLE books (
+                id TEXT PRIMARY KEY NOT NULL,
+                title TEXT NOT NULL,
+                author TEXT NOT NULL,
+                format TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                cover_path TEXT,
+                file_size INTEGER NOT NULL,
+                language TEXT NOT NULL,
+                tags TEXT,
+                trashed_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            "CREATE TABLE book_status (
+                book_id TEXT PRIMARY KEY NOT NULL,
+                status TEXT NOT NULL DEFAULT 'unread',
+                progress_current INTEGER DEFAULT 0,
+                progress_total INTEGER DEFAULT 0,
+                location TEXT,
+                last_read_at INTEGER,
+                position_changed_at INTEGER,
+                dwell_seconds INTEGER DEFAULT 0,
+                started_at INTEGER,
+                completed_at INTEGER,
+                metadata TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+            )",
+            "CREATE TABLE book_notes (
+                id TEXT PRIMARY KEY NOT NULL,
+                book_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                cfi TEXT NOT NULL,
+                text TEXT,
+                style TEXT,
+                color TEXT,
+                note TEXT NOT NULL,
+                context_before TEXT,
+                context_after TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+            )",
+            "CREATE TABLE notes (
+                id TEXT PRIMARY KEY NOT NULL,
+                book_id TEXT,
+                book_meta TEXT,
+                title TEXT,
+                content TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE SET NULL
+            )",
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY NOT NULL,
+                book_id TEXT,
+                metadata TEXT NOT NULL,
+                title TEXT NOT NULL,
+                messages TEXT NOT NULL,
+                starred INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+            )",
+            "CREATE TABLE reading_sessions (
+                id TEXT PRIMARY KEY NOT NULL,
+                book_id TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                ended_at INTEGER,
+                duration_seconds INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+            )",
+            "CREATE TABLE skills (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL UNIQUE,
+                content TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                is_system INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            "CREATE TABLE tags (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL UNIQUE,
+                color TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            "CREATE TABLE _sync_log (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                table_name TEXT NOT NULL,
+                row_id TEXT NOT NULL,
+                op TEXT NOT NULL,
+                at INTEGER NOT NULL
+            )",
+        ] {
+            sqlx::query(ddl).execute(&pool).await.unwrap();
+        }
+
+        if seed {
+            for seed_sql in [
+                "INSERT INTO books (id, title, author, format, file_path, file_size, language, trashed_at, created_at, updated_at) VALUES
+                    ('b1', '书一', '作者', 'EPUB', 'books/b1/book.epub', 100, 'zh', NULL, 1000, 1000),
+                    ('b2', '回收站的书', '作者', 'EPUB', 'books/b2/book.epub', 200, 'zh', 123, 1000, 1000)",
+                "INSERT INTO book_status (book_id, status, created_at, updated_at) VALUES ('b1', 'reading', 1000, 1000)",
+                "INSERT INTO book_notes (id, book_id, type, cfi, note, created_at, updated_at) VALUES ('bn1', 'b1', 'highlight', 'epubcfi(/6/2)', '批注', 1000, 1000)",
+                "INSERT INTO notes (id, book_id, title, content, created_at, updated_at) VALUES ('n1', 'b1', '笔记', '内容', 1000, 1000)",
+                "INSERT INTO threads (id, book_id, metadata, title, messages, starred, created_at, updated_at) VALUES ('t1', 'b1', '{}', '对话', '[]', 0, 1000, 1000)",
+                "INSERT INTO reading_sessions (id, book_id, started_at, duration_seconds, created_at, updated_at) VALUES ('s1', 'b1', 1000, 60, 1000, 1000)",
+                "INSERT INTO skills (id, name, content, is_active, is_system, created_at, updated_at) VALUES ('sk1', '技能', '内容', 1, 0, 1000, 1000)",
+                "INSERT INTO tags (id, name, color, created_at, updated_at) VALUES ('tg1', '标签', '#fff', 1000, 1000)",
+            ] {
+                sqlx::query(seed_sql).execute(&pool).await.unwrap();
+            }
+        }
+
+        // 触发器（迁移同构）：seed 之后建，存量行不产生日志
+        for (table, pk) in [
+            ("books", "id"),
+            ("book_status", "book_id"),
+            ("book_notes", "id"),
+            ("notes", "id"),
+            ("threads", "id"),
+            ("reading_sessions", "id"),
+            ("skills", "id"),
+            ("tags", "id"),
+        ] {
+            for (suffix, op, key) in [
+                ("ai", "INSERT", format!("NEW.{pk}")),
+                ("au", "UPDATE", format!("NEW.{pk}")),
+                ("ad", "DELETE", format!("OLD.{pk}")),
+            ] {
+                let sql = format!(
+                    "CREATE TRIGGER _sync_{table}_{suffix} AFTER {op} ON {table} BEGIN
+                        INSERT INTO _sync_log (table_name, row_id, op, at)
+                        VALUES ('{table}', {key}, '{op}', 0);
+                    END"
+                );
+                sqlx::query(&sql).execute(&pool).await.unwrap();
+            }
+        }
+
+        pool
+    }
+
+    /// 存量回填引导：存量行全保真打包，对端空库整体应用（含 FK 延迟校验，无静默丢数据）
+    #[tokio::test]
+    async fn test_bootstrap_dump_applies_to_empty_device() {
+        let src = bootstrap_pool(true).await;
+
+        // 存量不产生日志：触发器建立前的行对 changeset 不可见
+        assert_eq!(log_count(&src).await, 0);
+        assert!(!has_unpushed(&src, 0).await.unwrap());
+
+        // 引导回填：8 张表 9 行全部进日志
+        let dumped = emit_bootstrap_dump(&src).await.unwrap();
+        assert_eq!(dumped, 9);
+        assert!(has_unpushed(&src, 0).await.unwrap());
+
+        // 打包：每行一条（含回收站的书 b2）
+        let packed = changelog::pack_changes(&src, "dev-a", "0.0.0", 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(packed.row_count, 9);
+
+        // 对端空库应用：book_notes/book_status 排序在 books 前，靠 FK 延迟校验整包落库
+        let dst = bootstrap_pool(false).await;
+        let outcome = apply_changeset(&dst, packed.jsonl.as_bytes()).await.unwrap();
+        assert_eq!(outcome.count, 9, "全量包应整体应用，无 FK 静默丢数据");
+
+        assert_eq!(table_count(&dst, "books").await, 2, "含回收站行全保真");
+        assert_eq!(table_count(&dst, "reading_sessions").await, 1);
+        assert_eq!(table_count(&dst, "book_notes").await, 1);
+        assert_eq!(table_count(&dst, "book_status").await, 1);
+        assert_eq!(table_count(&dst, "threads").await, 1);
+        assert_eq!(table_count(&dst, "notes").await, 1);
+        assert_eq!(table_count(&dst, "skills").await, 1);
+        assert_eq!(table_count(&dst, "tags").await, 1);
+        assert_eq!(log_count(&dst).await, 0, "应用侧防回环应清掉日志");
     }
 }

@@ -18,6 +18,15 @@ fn file_path(config: &WebdavConfig, name: &str) -> String {
     format!("{}/{}", config.remote_dir.trim_matches('/'), name)
 }
 
+/// 统一 HTTP client：connect 10s / 总 120s 超时（防弱网下载悬挂）
+fn client() -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("创建 HTTP client 失败: {e}"))
+}
+
 async fn send(
     config: &WebdavConfig,
     method: Method,
@@ -25,7 +34,7 @@ async fn send(
     body: Option<Vec<u8>>,
 ) -> Result<reqwest::Response, String> {
     let url = remote_url(config, path)?;
-    let client = Client::new();
+    let client = client()?;
     let mut builder = client
         .request(method, url)
         .basic_auth(&config.username, Some(&config.password));

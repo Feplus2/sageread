@@ -111,7 +111,8 @@ CREATE TABLE IF NOT EXISTS _sync_log (
 - **2a 元数据通道**（核心）✅ 2026-07-22 落地：迁移（_sync_log+触发器、book_status 增 position_changed_at/dwell_seconds）、打包/应用引擎、冲突矩阵（含 threads 消息级合并）、事件驱动推送 + 退出前推送 + 独立拉取周期、本地/云端日志修剪、安全快照、设置 UI、对话面板刷新按钮。`cargo test` 21/21。真机双设备验收：对话/星标/进度同步、逗留判定（乱翻不污染、挂机不抢戳）、防回环、墓碑均通过。
 - **2a 审计修复**（2026-07-22）：① L1 备份成功曾重置全部 L2 状态（device_id/水位丢失，已修并有回归测试）；② devices 索引读失败禁止覆盖写（防网络抖动抹掉他端条目）；③ 三处同步落地逻辑合并为共享函数 `applySyncResult`，统一修复 reader store 缓存 config 陈旧导致的落点回写缺陷，划线/书架拉取后 UI 刷新补全（SyncRunResult 增 `books_changed`/`notes_changed`）；④ 开书快拉不再回写旧 progress；防跳动不再被程序化跳转污染；补 online 事件触发同步。已知遗留：l2-safety 快照尚无回滚入口（目前只能手动拷贝恢复）。
 - **2b 书籍通道**：sha256 索引、上传、懒下载、书架"云端未下载"标识
-- **2c 打磨**：调度优化（空闲才跑）、大库首次全量引导、移动端接入文档
+- **2c 打磨**：调度优化（空闲才跑）、移动端接入文档
+- **2c 大库首次全量引导**（2026-07-26 落地，补上 §13 承诺的"初始引导"）：触发器只记录迁移之后的变更，存量行进不了 changeset，新设备收不到存量书；且包内按 table+id 排序使 book_notes/book_status 排在 books 前，父行后至触发 FK 失败，被"整包跳过+水位照推"静默丢弃。机制：① `SyncState.bootstrapped_at`——首次 run_sync 把 8 张同步表**全部现存行**（books 含回收站行，全保真）以 op=INSERT 回填 `_sync_log`，随后走正常推送（pack_changes 自然带上）；② `SyncState.bootstrap_peers`——拉取时发现 devices.json 出现未引导过的他端设备且本地有书，再回填一次并记入该清单防重复（新设备后加入也收得到存量）；③ 应用侧事务内 `PRAGMA defer_foreign_keys = ON`，FK 延迟到提交时校验，同包父行后至也能整包落库（提交时仍校验，真缺父行整包回滚）。接收端本就按主键 UPSERT 幂等应用，重放无害
 - **资产通道（2026-07-24 落地）**：字体（`fonts/*.woff2`）与自定义背景图（`reader-backgrounds/*`）内容寻址双向同步，云端布局 `assets/<sha256前2位>/<sha256>` + `assets-index.json`（key=`kind/filename`），随每轮 run_sync 自动上传本地新增/下载云端缺失；背景选择状态（readerBackground，剔除设备相关 fileUrl）与辅助模型选择（utilityModel，仅 id/名称）经 `ui-config.json` 整文件 LWW 同步，变更用值对比检测。**安全红线：modelProviders（含 apiKey）永不同步**；辅助模型选择需两端配置同一 provider 才生效
 
 ## 12. 开放问题（请评审）
@@ -126,4 +127,4 @@ CREATE TABLE IF NOT EXISTS _sync_log (
 
 - 触发器带来的写放大：每次业务写多一条日志行，可忽略
 - 首次双端全量合并：以"并集"为原则（各自上传全部现状作为初始 changeset），报告里写清引导流程
-- 老库升级：_sync_log 从迁移时刻开始记录，之前的存量数据通过"初始引导"全量推送一次
+- ~~老库升级：_sync_log 从迁移时刻开始记录，之前的存量数据通过"初始引导"全量推送一次~~ ✅ 已实现（2026-07-26）：bootstrapped_at 首轮回填 + bootstrap_peers 新设备回填 + 应用侧 FK 延迟校验，机制见 §11"2c 大库首次全量引导"

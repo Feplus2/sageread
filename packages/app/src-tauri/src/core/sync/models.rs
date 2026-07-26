@@ -76,6 +76,12 @@ pub struct SyncState {
     pub last_l2_sync_at: Option<i64>,
     #[serde(default)]
     pub last_l2_result: Option<String>,
+    /// 首次全量引导完成时间（存量回填进 _sync_log，协议 §11 2c）
+    #[serde(default)]
+    pub bootstrapped_at: Option<i64>,
+    /// 已为其做过存量回填引导的他端设备 id（防重复 dump）
+    #[serde(default)]
+    pub bootstrap_peers: Vec<String>,
 }
 
 /// 备份执行结果（uploaded=已上传，skipped=无变化跳过）
