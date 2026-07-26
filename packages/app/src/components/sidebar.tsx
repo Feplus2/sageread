@@ -10,7 +10,17 @@ import { getTrashedBooks } from "@/services/book-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useLibraryStore } from "@/store/library-store";
 import clsx from "clsx";
-import { BarChart3, Brain, ChevronDown, ChevronRight, Library, Lightbulb, Settings, Trash2 } from "lucide-react";
+import {
+  BarChart3,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  FileDown,
+  Library,
+  Lightbulb,
+  Settings,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
@@ -129,6 +139,11 @@ export default function Sidebar() {
       path: "/skills",
       label: "技能库",
       icon: Lightbulb,
+    },
+    {
+      path: "/converter",
+      label: "PDF 转换",
+      icon: FileDown,
     },
     {
       path: "/statistics",

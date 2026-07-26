@@ -2,6 +2,7 @@ import SettingsDialog from "@/components/settings/settings-dialog";
 import { useBookUpload } from "@/hooks/use-book-upload";
 import { useSafeAreaInsets } from "@/hooks/use-safe-areaInsets";
 import ChatPage from "@/pages/chat";
+import ConverterPage from "@/pages/converter";
 import LibraryPage from "@/pages/library";
 import TrashPage from "@/pages/library/trash";
 import SkillsPage from "@/pages/skills";
@@ -138,6 +139,14 @@ const HomeLayout = () => {
               element={
                 <div className="flex h-full flex-1 flex-col rounded-xl border bg-background shadow-around">
                   <SkillsPage />
+                </div>
+              }
+            />
+            <Route
+              path="/converter"
+              element={
+                <div className="flex h-full flex-1 flex-col rounded-xl border bg-background shadow-around">
+                  <ConverterPage />
                 </div>
               }
             />

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { useProviderStore } from "@/store/provider-store";
 import { ChevronRight, Server } from "lucide-react";
 import { useState } from "react";
+import ConverterSettings from "./converter";
 import FontManager from "./font-manager";
 import GeneralSettings from "./general";
 import LlamaSettings from "./llama";
@@ -25,6 +26,7 @@ type SettingsKey =
   | "llama"
   | "tts"
   | "sync"
+  | "converter"
   | "model-providers"
   | "shortcuts"
   | "provider-openai"
@@ -71,6 +73,7 @@ export default function SettingsDialog({ open, onOpenChange }: SettingsDialogPro
     { key: "llama", label: "向量模型" },
     { key: "tts", label: "语音模型" },
     { key: "sync", label: "数据同步" },
+    { key: "converter", label: "PDF 转换" },
     {
       key: "model-providers",
       label: "模型提供商",
@@ -107,6 +110,8 @@ export default function SettingsDialog({ open, onOpenChange }: SettingsDialogPro
         return <TTSSettings />;
       case "sync":
         return <SyncSettings />;
+      case "converter":
+        return <ConverterSettings />;
       case "model-providers":
         return (
           <ProvidersSettings onProviderSelect={(providerId) => setActiveKey(`provider-${providerId}` as SettingsKey)} />

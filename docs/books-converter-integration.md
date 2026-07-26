@@ -1,9 +1,8 @@
 # Books_Converter 整合进 SageRead · 实施交接文档
 
-> 状态：**进行中（已暂停）**。SageRead 侧 Rust 后端已写好；Books_Converter 侧改造 + 前端页面未做。
-> 暂停原因：Books_Converter（`F:\MyProjects\Books_Converter`）在 SageRead 工作区**之外**，文件编辑工具够不到。
-> **接手前提**：在 IDE 里把 `F:\MyProjects\Books_Converter` 添加为工作区文件夹（File → Add Folder to Workspace），即可正常编辑两个项目。
-> 最后更新：2026-07-24。
+> 状态：**✅ 已完成（2026-07-26）**。Phase 0（Converter 侧 headless 改造 + exe 打包放置）、Phase 3（设置页 MinerU Token）、Phase 4（前端转换页）全部落地；cargo check + tsc + biome 通过。**待用户实测：真实 PDF 端到端转换 → 导入图书馆。**
+> 落地偏差见文末"九、实施偏差备忘"。
+> 最后更新：2026-07-26。
 
 ---
 
@@ -285,3 +284,18 @@ copy dist\books_converter.exe F:\MyProjects\SageRead\packages\app\src-tauri\bina
 - 入库：`uploadBook()`（`services/book-service.ts`）→ Rust `save_book`（移到 `books/<id>/book.epub` + 封面 + 入库 + 同步上传）。
 - sidecar 先例：`core/fonts/commands.rs` 的 `woff2_compress`（`.shell().sidecar(...)`）。
 - 流式用 `command.spawn()` 返回 `(Receiver<CommandEvent>, CommandChild)`；`CommandEvent::{Stdout,Stderr,Terminated,Error}`。
+
+---
+
+## 九、实施偏差备忘（2026-07-26 落地时，原文档此处及之前为计划稿）
+
+- **Phase 0 已落盘**：`progress_headless.py`（新建）、`pipeline.py`（--headless 等 6 处改造）、`books_converter_cli.spec`（新建）均在 `F:\MyProjects\Books_Converter`；exe 已构建（onefile，60MB，无 torch/tkinter）并放置 `packages/app/src-tauri/binaries/books_converter-x86_64-pc-windows-msvc.exe`（同时清除了早前误放的 onedir `_internal/` 与 14.8MB 旧 exe）。
+- **`ensure_ascii=True`**（偏离 §4.1）：Windows 下管道 stdout 默认 GBK 代码页，中文直出会在 Rust 侧 UTF-8 读取时乱码；`\uXXXX` 转义在任何编码下安全，JSON 解析结果相同。另：`progress_headless.py` 模块 docstring 用 r 前缀（含 `\uXXXX` 字面量触发 unicodeescape SyntaxError）；`pipeline.py` docstring 同改 r 前缀（消除 `\m` SyntaxWarning）。
+- **`_ErrCapture` 捕获首条 ERROR**（偏离 §4.2(2)）：首条最贴近根因（如 "Stage 1 失败: token 无效"），"最后一条"会拿到 "请检查..." 建议语。
+- **PDF 不存在也发 error JSON**（§4.2 未覆盖）：该检查在 try 块外，原文档方案下 headless 失败只会静默退出。
+- **`pw.finish` headless 传完整路径**：前端凭 `done.epub_path` 读文件入库；GUI 模式仍只显示文件名。
+- **spec hiddenimports 补 `stage4_translate`**（§4.3 遗漏）。
+- **MinerU Token 存 `converter-store.json`**（本机 config 目录，zustand persist + tauriStorage）：L1 备份白名单 `JSON_FILES`（backup.rs）与同步通道均不含此文件，密钥不外传。
+- **Phase 3/4 已落地**：`store/converter-store.ts`、`services/converter-service.ts`（invoke/listen 封装 + 辅助模型→`llmBaseUrl/llmApiKey/llmModel` 映射，baseUrl 缺省回落 deepseek 端点）、`pages/converter/index.tsx`（选 PDF/强制 OCR/翻译语言/流式进度/取消/导入图书馆）、设置对话框"PDF 转换"区、`/converter` 路由 + 侧边栏导航（FileDown 图标）。
+- **关联改动：多格式导入解锁**（同日）：`SUPPORTED_FILE_EXTS` = epub/pdf/mobi/cbz/fb2/fbz，对齐 `uploadBook` 白名单与 `DocumentLoader` 支持范围。
+- **平滑进度（2026-07-26 二轮）**：`progress_headless.py` 补齐 GUI `_tick` 的爬行+缓动策略——0.5s 节拍线程：无 fraction 输入时目标百分比在阶段跨度内缓慢爬行（封顶跨度 90%），显示值缓动逼近目标；fraction/阶段完成只推进目标值，单调不减。协议形状不变，Rust/前端零改动。另已重打 exe 同步 Converter 侧 v1.1（目录锚定三重修复 + 页码回补章标题，仅触 `stage2_common.py`）。

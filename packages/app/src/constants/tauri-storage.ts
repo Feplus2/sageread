@@ -3,4 +3,5 @@ export const tauriStorageKey = {
   appSettings: "app-settings",
   llamaStore: "llama-store",
   layoutStore: "layout-store",
+  converterStore: "converter-store",
 } as const;
