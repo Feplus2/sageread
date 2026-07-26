@@ -479,7 +479,7 @@ export default function SyncSettings() {
       </div>
       <div className="rounded-lg bg-muted/80 p-4">
         <div className="flex items-center justify-between">
-          <h2 className="text dark:text-neutral-200">增量同步（L2）</h2>
+          <h2 className="text dark:text-neutral-200">增量同步</h2>
           <Switch
             checked={config.l2_enabled}
             onCheckedChange={(checked) => handleSaveL2Config({ l2_enabled: checked === true })}
