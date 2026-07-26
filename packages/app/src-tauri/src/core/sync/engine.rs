@@ -45,6 +45,8 @@ pub struct ApplyOutcome {
     pub thread_ids: Vec<String>,
     pub books_changed: bool,
     pub notes_changed: bool,
+    /// 实际应用的 books 行数（B 端引导到达的可观测日志用）
+    pub books_count: usize,
 }
 
 /// 设备指针文件 devices/<device_id>.json（各写各的，互不打架）
@@ -117,6 +119,30 @@ impl SyncState {
             .get_or_insert_with(HashMap::new)
             .insert(device_id.to_string(), seq);
     }
+
+    /// 记录某包应用失败，返回累计次数
+    fn record_pack_failure(&mut self, device_id: &str, seq_end: i64) -> u8 {
+        let count = self.failed_packs.entry(pack_failure_key(device_id, seq_end)).or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    /// 应用成功：清除该包失败记录
+    fn clear_pack_failure(&mut self, device_id: &str, seq_end: i64) {
+        self.failed_packs.remove(&pack_failure_key(device_id, seq_end));
+    }
+}
+
+fn pack_failure_key(device_id: &str, seq_end: i64) -> String {
+    format!("{device_id}/{seq_end}")
+}
+
+/// 单包应用失败重试上限：满后跳过并告警（防永久坏包卡死拉取水位）
+const MAX_PACK_FAILURES: u8 = 3;
+
+/// 失败包处置：累计失败次数，返回 true 表示已达上限应跳过（调用方推进水位），false 留下轮重试
+fn note_pack_failure(state: &mut SyncState, device_id: &str, seq_end: i64) -> bool {
+    state.record_pack_failure(device_id, seq_end) >= MAX_PACK_FAILURES
 }
 
 /* ---------------- 云端指针与索引 ---------------- */
@@ -153,9 +179,9 @@ async fn read_devices_index(config: &WebdavConfig) -> Result<HashMap<String, Dev
     }
 }
 
-async fn upsert_devices_index(config: &WebdavConfig, device_id: &str, latest_seq: i64) -> Result<(), String> {
-    // 索引不存在（404）才当空表；读取/解析失败直接 Err，禁止盲写覆盖云端其他设备条目
-    let mut index = read_devices_index(config).await?;
+/// 把本设备登记进索引 map（纯函数便于测试；网络读写由 upsert_devices_index 负责）。
+/// latest_seq 可为 0（纯拉取设备也要可被对端发现，协议 §3 设备登记语义）
+pub fn register_in_index(index: &mut HashMap<String, DeviceIndexEntry>, device_id: &str, latest_seq: i64) {
     index.insert(
         device_id.to_string(),
         DeviceIndexEntry {
@@ -163,8 +189,28 @@ async fn upsert_devices_index(config: &WebdavConfig, device_id: &str, latest_seq
             last_online: now_ms(),
         },
     );
+}
+
+async fn upsert_devices_index(config: &WebdavConfig, device_id: &str, latest_seq: i64) -> Result<(), String> {
+    // 索引不存在（404）才当空表；读取/解析失败直接 Err，禁止盲写覆盖云端其他设备条目
+    let mut index = read_devices_index(config).await?;
+    register_in_index(&mut index, device_id, latest_seq);
     let bytes = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
     put_path_atomic(config, &format!("{L2_ROOT}/devices.json"), bytes).await
+}
+
+/// 发现需要全量引导的新 peer：devices.json 里非自身且未引导过的设备（排序输出，日志/测试稳定）
+pub fn new_bootstrap_peers(
+    device_ids: impl IntoIterator<Item = String>,
+    device_id: &str,
+    bootstrap_peers: &[String],
+) -> Vec<String> {
+    let mut peers: Vec<String> = device_ids
+        .into_iter()
+        .filter(|id| id != device_id && !bootstrap_peers.contains(id))
+        .collect();
+    peers.sort();
+    peers
 }
 
 /* ---------------- 应用前安全快照（复用 L1 VACUUM INTO） ---------------- */
@@ -572,7 +618,10 @@ pub async fn apply_changeset(pool: &SqlitePool, bytes: &[u8]) -> Result<ApplyOut
         match table.as_str() {
             "book_status" => outcome.book_status_ids.push(id.clone()),
             "threads" => outcome.thread_ids.push(id.clone()),
-            "books" => outcome.books_changed = true,
+            "books" => {
+                outcome.books_changed = true;
+                outcome.books_count += 1;
+            }
             "notes" | "book_notes" => outcome.notes_changed = true,
             _ => {}
         }
@@ -720,11 +769,7 @@ async fn pull_from_devices(
 
     // 新设备引导回填（协议 §11 2c）：发现他端设备（此前未为其引导过）且本地有存量书，
     // 则全量回填一次进 _sync_log，下一轮推送周期上云；bootstrap_peers 防重复
-    let new_peers: Vec<String> = devices
-        .keys()
-        .filter(|id| *id != device_id && !state.bootstrap_peers.contains(*id))
-        .cloned()
-        .collect();
+    let new_peers = new_bootstrap_peers(devices.keys().cloned(), device_id, &state.bootstrap_peers);
     if !new_peers.is_empty() {
         let book_count: i64 = sqlx::query("SELECT COUNT(*) as c FROM books")
             .fetch_one(pool)
@@ -733,8 +778,14 @@ async fn pull_from_devices(
             .get("c");
         if book_count > 0 {
             let dumped = emit_bootstrap_dump(pool).await?;
+            for peer in &new_peers {
+                log::info!(
+                    "发现新设备 {}，已生成全量引导（{} 行），将于下一轮推送",
+                    &peer[..8.min(peer.len())],
+                    dumped
+                );
+            }
             state.bootstrap_peers.extend(new_peers);
-            log::info!("新设备引导：回填 {dumped} 行存量到变更日志");
         }
     }
 
@@ -758,6 +809,9 @@ async fn pull_from_devices(
             }
         };
 
+        // 失败包不推水位、阻塞同设备后续包（父行可能就在失败包里，跳过去应用仍会失败）
+        let mut blocked = false;
+
         for cs in &pointer.changesets {
             if cs.seq_end <= last_pulled {
                 continue;
@@ -779,23 +833,37 @@ async fn pull_from_devices(
 
             match apply_changeset(pool, &bytes).await {
                 Ok(applied) => {
+                    if applied.books_count > 0 {
+                        log::info!("收到书籍元数据 {} 条", applied.books_count);
+                    }
                     outcome.count += applied.count;
                     outcome.book_status_ids.extend(applied.book_status_ids);
                     outcome.thread_ids.extend(applied.thread_ids);
                     outcome.books_changed |= applied.books_changed;
                     outcome.notes_changed |= applied.notes_changed;
+                    outcome.books_count += applied.books_count;
                     state.set_last_pulled(remote_id, cs.seq_end);
+                    state.clear_pack_failure(remote_id, cs.seq_end);
                     watermark_changed = true;
                 }
                 Err(e) => {
-                    log::error!("应用 changeset 失败（整包跳过并告警）: {path}: {e}");
-                    state.set_last_pulled(remote_id, cs.seq_end);
-                    watermark_changed = true;
+                    if note_pack_failure(state, remote_id, cs.seq_end) {
+                        log::error!("应用 changeset 失败满 {MAX_PACK_FAILURES} 次，跳过并告警: {path}: {e}");
+                        state.set_last_pulled(remote_id, cs.seq_end);
+                        watermark_changed = true;
+                    } else {
+                        // 不推进水位，下轮重试（如乱序包：引导包到达后自动恢复）
+                        log::warn!("应用 changeset 失败，不推水位，下轮重试: {path}: {e}");
+                        blocked = true;
+                        break;
+                    }
                 }
             }
         }
 
-        state.set_last_pulled(remote_id, info.latest_seq.max(state.last_pulled_of(remote_id)));
+        if !blocked {
+            state.set_last_pulled(remote_id, info.latest_seq.max(state.last_pulled_of(remote_id)));
+        }
     }
 
     // 发布本设备的应用水位到设备指针（供其他设备修剪其云端 changesets）
@@ -834,6 +902,10 @@ pub async fn run_sync(app: &AppHandle, pool: &SqlitePool, config: &WebdavConfig)
         ],
     )
     .await?;
+
+    // 设备登记（协议 §3）：无论有无变更，每轮都把自己 upsert 进 devices.json——
+    // 纯拉取设备也必须可被对端发现，否则"发现新 peer 就全量引导"永远触发不到它
+    upsert_devices_index(config, &device_id, state.last_pushed_seq.unwrap_or(0)).await?;
 
     // 首次全量引导（协议 §11 2c）：触发器建立前的存量行回填进 _sync_log，随后走正常推送
     if state.bootstrapped_at.is_none() {
@@ -967,6 +1039,11 @@ pub async fn run_pull_only(app: &AppHandle, pool: &SqlitePool, config: &WebdavCo
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let mut state = super::backup::read_sync_state(&config_dir);
     let device_id = ensure_device_id(&config_dir, &mut state)?;
+
+    // 设备登记（协议 §3）：纯拉取轮同样每轮写 devices.json（latest_seq 可为 0），
+    // 否则新设备对老设备的"发现新 peer 就全量引导"不可见；先确保云端目录存在
+    webdav::ensure_remote_dirs(config, &[L2_ROOT.to_string(), format!("{L2_ROOT}/devices")]).await?;
+    upsert_devices_index(config, &device_id, state.last_pushed_seq.unwrap_or(0)).await?;
 
     let pulled = pull_from_devices(app, pool, config, &device_id, &mut state).await?;
 
@@ -1782,5 +1859,133 @@ mod tests {
         assert_eq!(table_count(&dst, "skills").await, 1);
         assert_eq!(table_count(&dst, "tags").await, 1);
         assert_eq!(log_count(&dst).await, 0, "应用侧防回环应清掉日志");
+    }
+
+    fn book_row(id: &str, updated_at: i64) -> ChangeRow {
+        ChangeRow {
+            table: "books".to_string(),
+            id: id.to_string(),
+            op: "INSERT".to_string(),
+            updated_at,
+            data: Some(serde_json::json!({
+                "id": id,
+                "title": "书",
+                "author": "作者",
+                "format": "EPUB",
+                "file_path": format!("books/{id}/book.epub"),
+                "cover_path": null,
+                "file_size": 100,
+                "language": "zh",
+                "tags": null,
+                "trashed_at": null,
+                "created_at": 1000,
+                "updated_at": updated_at,
+            })),
+        }
+    }
+
+    fn session_row(id: &str, book_id: &str, updated_at: i64) -> ChangeRow {
+        ChangeRow {
+            table: "reading_sessions".to_string(),
+            id: id.to_string(),
+            op: "INSERT".to_string(),
+            updated_at,
+            data: Some(serde_json::json!({
+                "id": id,
+                "book_id": book_id,
+                "started_at": 1000,
+                "ended_at": null,
+                "duration_seconds": 60,
+                "created_at": 1000,
+                "updated_at": updated_at,
+            })),
+        }
+    }
+
+    /// 完整链路：B 空白（无变更可推）→ 登记进 devices.json → A 发现新 peer → dump+推 → B 收到全量
+    #[tokio::test]
+    async fn test_device_registration_and_bootstrap_chain() {
+        // B 空白：无任何可推变更——若登记只在推送分支，B 永远进不了 devices.json（漏洞 1 前置）
+        let b = bootstrap_pool(false).await;
+        assert!(!has_unpushed(&b, 0).await.unwrap());
+        assert!(changelog::pack_changes(&b, "dev-b", "0.0.0", 0).await.unwrap().is_none(), "B 无变更可推");
+
+        // B 每轮登记（latest_seq 可为 0）→ 出现在索引里
+        let mut index: HashMap<String, DeviceIndexEntry> = HashMap::new();
+        register_in_index(&mut index, "dev-b", 0);
+        assert_eq!(index.get("dev-b").map(|e| e.latest_seq), Some(0));
+
+        // A 有存量：发现 B（不在 bootstrap_peers）→ dump 全量 → 打包
+        let a = bootstrap_pool(true).await;
+        let peers = new_bootstrap_peers(index.keys().cloned(), "dev-a", &[]);
+        assert_eq!(peers, vec!["dev-b".to_string()], "A 应发现新设备 B");
+        let dumped = emit_bootstrap_dump(&a).await.unwrap();
+        assert_eq!(dumped, 9);
+        // 已引导过的 peer 不再重复发现（防重复 dump）
+        assert!(new_bootstrap_peers(index.keys().cloned(), "dev-a", &["dev-b".to_string()]).is_empty());
+        // A 自身不出现在新 peer 列表
+        let mut index_with_a = index.clone();
+        register_in_index(&mut index_with_a, "dev-a", 42);
+        assert_eq!(new_bootstrap_peers(index_with_a.keys().cloned(), "dev-a", &["dev-b".to_string()]), Vec::<String>::new());
+
+        let packed = changelog::pack_changes(&a, "dev-a", "0.0.0", 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(packed.row_count, 9);
+
+        // B 拉到全量：8 表齐全、无 FK 错误
+        let outcome = apply_changeset(&b, packed.jsonl.as_bytes()).await.unwrap();
+        assert_eq!(outcome.count, 9);
+        assert_eq!(outcome.books_count, 2, "books 应用条数可用于 B 端可见性日志");
+        for (table, expected) in [
+            ("books", 2),
+            ("book_status", 1),
+            ("book_notes", 1),
+            ("notes", 1),
+            ("threads", 1),
+            ("reading_sessions", 1),
+            ("skills", 1),
+            ("tags", 1),
+        ] {
+            assert_eq!(table_count(&b, table).await, expected, "{table} 应收到全量");
+        }
+    }
+
+    /// 乱序丢包：B 先拉到引用缺失书籍的 session 包（失败不计水位、不跳过）→ 书籍包到达 → 重试成功
+    #[tokio::test]
+    async fn test_out_of_order_pack_retried_after_books_arrive() {
+        let b = bootstrap_pool(false).await;
+        let mut state = SyncState::default();
+
+        // B 先拉到 session 包（引用的 books b1 还没到）→ 整包失败（FK 延迟到提交仍校验）
+        let session_pack = changeset_bytes(&[session_row("s1", "b1", 2000)]);
+        assert!(apply_changeset(&b, &session_pack).await.is_err(), "父行整库缺失应整包失败");
+
+        // 失败处置：不推水位、未满 3 次不跳过（留下轮重试）
+        assert!(!note_pack_failure(&mut state, "dev-a", 10), "第 1 次失败不应跳过");
+        assert!(!note_pack_failure(&mut state, "dev-a", 10), "第 2 次失败不应跳过");
+        assert_eq!(state.last_pulled_of("dev-a"), 0, "失败包不推进水位");
+        assert_eq!(state.failed_packs.get("dev-a/10"), Some(&2));
+
+        // 书籍包到达 → 应用成功，水位推进
+        let books_pack = changeset_bytes(&[book_row("b1", 1000)]);
+        let outcome = apply_changeset(&b, &books_pack).await.unwrap();
+        assert_eq!(outcome.count, 1);
+        assert_eq!(outcome.books_count, 1);
+        state.set_last_pulled("dev-a", 9);
+
+        // 下轮重试 session 包 → 成功，清除失败记录
+        let outcome = apply_changeset(&b, &session_pack).await.unwrap();
+        assert_eq!(outcome.count, 1, "父行到达后重放应成功（幂等）");
+        state.clear_pack_failure("dev-a", 10);
+        assert!(state.failed_packs.is_empty());
+        assert_eq!(table_count(&b, "reading_sessions").await, 1);
+
+        // 3 次封顶：永久坏包满 3 次才跳过（推进水位）
+        let mut state2 = SyncState::default();
+        assert!(!note_pack_failure(&mut state2, "dev-a", 20));
+        assert!(!note_pack_failure(&mut state2, "dev-a", 20));
+        assert!(note_pack_failure(&mut state2, "dev-a", 20), "第 3 次失败应跳过并告警");
     }
 }

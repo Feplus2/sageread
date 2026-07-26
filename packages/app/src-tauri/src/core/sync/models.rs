@@ -82,6 +82,9 @@ pub struct SyncState {
     /// 已为其做过存量回填引导的他端设备 id（防重复 dump）
     #[serde(default)]
     pub bootstrap_peers: Vec<String>,
+    /// 每包应用失败次数（key = device_id/seq_end）：失败不推水位下轮重试，满 3 次跳过
+    #[serde(default)]
+    pub failed_packs: std::collections::HashMap<String, u8>,
 }
 
 /// 备份执行结果（uploaded=已上传，skipped=无变化跳过）
