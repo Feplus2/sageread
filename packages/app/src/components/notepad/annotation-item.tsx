@@ -1,8 +1,12 @@
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { useReaderStore } from "@/pages/reader/components/reader-provider";
 import { HIGHLIGHT_COLOR_HEX, HIGHLIGHT_COLOR_RGBA } from "@/services/constants";
 import type { BookNote } from "@/types/book";
-import { Menu } from "@tauri-apps/api/menu";
-import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import dayjs from "dayjs";
 import { useCallback } from "react";
@@ -41,38 +45,13 @@ export const AnnotationItem = ({ annotation, onDelete }: AnnotationItemProps) =>
     }
   }, [annotation, onDelete]);
 
-  const handleMenuClick = useCallback(
-    async (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      try {
-        const menu = await Menu.new({
-          items: [
-            {
-              id: "delete",
-              text: "删除",
-              action: () => {
-                handleNativeDelete();
-              },
-            },
-          ],
-        });
-
-        await menu.popup(new LogicalPosition(e.clientX, e.clientY));
-      } catch (error) {
-        console.error("显示菜单失败:", error);
-      }
-    },
-    [handleNativeDelete],
-  );
-
   return (
-    <div
-      className="group cursor-pointer rounded-lg bg-muted p-2 transition-colors dark:bg-neutral-900"
-      onClick={handleClick}
-      onContextMenu={handleMenuClick}
-    >
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className="group cursor-pointer rounded-lg bg-muted p-2 transition-colors dark:bg-neutral-900"
+          onClick={handleClick}
+        >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           {annotation.context && (
@@ -116,6 +95,13 @@ export const AnnotationItem = ({ annotation, onDelete }: AnnotationItemProps) =>
           </div>
         </div>
       </div>
-    </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem variant="destructive" onClick={() => handleNativeDelete()}>
+          删除
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 };

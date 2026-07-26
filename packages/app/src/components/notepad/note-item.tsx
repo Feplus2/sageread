@@ -1,6 +1,10 @@
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import type { Note } from "@/types/note";
-import { Menu } from "@tauri-apps/api/menu";
-import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import dayjs from "dayjs";
 import { useCallback, useState } from "react";
@@ -38,51 +42,30 @@ export const NoteItem = ({ note }: NoteItemProps) => {
     setShowDetail(true);
   }, []);
 
-  const handleMenuClick = useCallback(
-    async (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      try {
-        const menu = await Menu.new({
-          items: [
-            {
-              id: "delete",
-              text: "删除",
-              action: () => {
-                handleNativeDelete();
-              },
-            },
-          ],
-        });
-
-        await menu.popup(new LogicalPosition(e.clientX, e.clientY));
-      } catch (error) {
-        console.error("显示菜单失败:", error);
-      }
-    },
-    [handleNativeDelete],
-  );
-
   return (
     <>
-      <div
-        className="group cursor-pointer rounded-lg bg-muted p-2"
-        onClick={handleClick}
-        onContextMenu={handleMenuClick}
-      >
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="line-clamp-3 select-auto text-neutral-700 text-sm dark:text-neutral-200">
-              {note.content || "暂无内容"}
-            </p>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div className="group cursor-pointer rounded-lg bg-muted p-2" onClick={handleClick}>
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="line-clamp-3 select-auto text-neutral-700 text-sm dark:text-neutral-200">
+                  {note.content || "暂无内容"}
+                </p>
 
-            <div className="mt-1 text-neutral-800 text-xs dark:text-neutral-500">
-              {dayjs(note.createdAt).format("YYYY-MM-DD HH:mm:ss")}
+                <div className="mt-1 text-neutral-800 text-xs dark:text-neutral-500">
+                  {dayjs(note.createdAt).format("YYYY-MM-DD HH:mm:ss")}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem variant="destructive" onClick={() => handleNativeDelete()}>
+            删除
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       <NoteDetailDialog note={note} open={showDetail} onOpenChange={setShowDetail} />
     </>
