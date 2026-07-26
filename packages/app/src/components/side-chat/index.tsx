@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAutoPreview } from "@/hooks/use-auto-preview";
 import { useChatState } from "@/hooks/use-chat-state";
 import { exportMessagesToHtml } from "@/lib/export-thread-html";
 import { exportMessagesToImage } from "@/lib/export-thread-image";
@@ -103,6 +104,9 @@ function ChatContent({ bookId }: ChatContentProps) {
     currentThread: currentThread,
     setCurrentThread: setCurrentThread,
   });
+
+  // AI 回复完成后自动打开可预览代码块的预览面板
+  useAutoPreview(messages, status);
 
   const handleViewToolDetail = (toolPart: any) => {
     setToolDetail(toolPart);
@@ -268,12 +272,14 @@ function ChatContent({ bookId }: ChatContentProps) {
         </div>
       </div>
       {showThreads && bookId ? (
-        <ChatThreads
-          key={`threads-${threadsKey}`}
-          bookId={bookId}
-          onBack={handleBackFromThreads}
-          onSelectThread={handleSelectThread}
-        />
+        <div className="min-h-0 flex-1">
+          <ChatThreads
+            key={`threads-${threadsKey}`}
+            bookId={bookId}
+            onBack={handleBackFromThreads}
+            onSelectThread={handleSelectThread}
+          />
+        </div>
       ) : messages.length === 0 && isInit.current ? (
         <EmptyState />
       ) : (
@@ -303,7 +309,7 @@ function ChatContent({ bookId }: ChatContentProps) {
 
       {selectionMode && !showThreads && (
         <div className="-translate-x-1/2 absolute bottom-20 left-1/2 z-40 flex items-center gap-2 rounded-xl border bg-background px-3 py-2 shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
-          <span className="text-neutral-600 text-xs dark:text-neutral-400">已选 {selectedIds.size} 条</span>
+          <span className="flex-shrink-0 text-nowrap text-neutral-600 text-xs dark:text-neutral-400">已选 {selectedIds.size} 条</span>
           <Button
             variant="outline"
             size="sm"

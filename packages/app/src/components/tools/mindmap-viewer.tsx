@@ -1,13 +1,18 @@
+import { iframeService } from "@/services/iframe-service";
 import { Transformer } from "markmap-lib";
 import { Toolbar } from "markmap-toolbar";
 import "markmap-toolbar/dist/style.css";
-import { iframeService } from "@/services/iframe-service";
-import { Menu, MenuItem } from "@tauri-apps/api/menu";
 import { Markmap } from "markmap-view";
-import { memo, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 interface MindmapViewerProps {
   markdown: string;
+}
+
+interface NodeMenuState {
+  x: number;
+  y: number;
+  nodeText: string;
 }
 
 const MindmapViewerComponent = ({ markdown }: MindmapViewerProps) => {
@@ -15,6 +20,33 @@ const MindmapViewerComponent = ({ markdown }: MindmapViewerProps) => {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const markmapRef = useRef<Markmap | null>(null);
   const toolbarInstanceRef = useRef<Toolbar | null>(null);
+
+  // 自定义节点右键菜单（markmap 节点为动态 SVG，无法用声明式 ContextMenu 包裹）
+  const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
+
+  const closeNodeMenu = useCallback(() => setNodeMenu(null), []);
+
+  const handleAskAI = useCallback(() => {
+    if (!nodeMenu) return;
+    iframeService.sendAskAIRequest(nodeMenu.nodeText, `请解释：${nodeMenu.nodeText}`);
+    closeNodeMenu();
+  }, [nodeMenu, closeNodeMenu]);
+
+  const handleCopyNode = useCallback(() => {
+    if (!nodeMenu) return;
+    navigator.clipboard.writeText(nodeMenu.nodeText);
+    closeNodeMenu();
+  }, [nodeMenu, closeNodeMenu]);
+
+  // Esc 关闭菜单
+  useEffect(() => {
+    if (!nodeMenu) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeNodeMenu();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [nodeMenu, closeNodeMenu]);
 
   useEffect(() => {
     if (!svgRef.current || !markdown || !toolbarRef.current) return;
@@ -32,7 +64,7 @@ const MindmapViewerComponent = ({ markdown }: MindmapViewerProps) => {
       resizeObserver.observe(svgRef.current.parentElement);
     }
 
-    const handleContextMenu = async (e: MouseEvent) => {
+    const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
 
@@ -52,30 +84,7 @@ const MindmapViewerComponent = ({ markdown }: MindmapViewerProps) => {
 
       if (!nodeText) return;
 
-      try {
-        const menu = await Menu.new({
-          items: [
-            await MenuItem.new({
-              id: "ask-ai",
-              text: `询问 AI 关于"${nodeText.slice(0, 20)}${nodeText.length > 20 ? "..." : ""}"`,
-              action: () => {
-                iframeService.sendAskAIRequest(nodeText, `请解释：${nodeText}`);
-              },
-            }),
-            await MenuItem.new({
-              id: "copy",
-              text: "复制节点内容",
-              action: () => {
-                navigator.clipboard.writeText(nodeText);
-              },
-            }),
-          ],
-        });
-
-        await menu.popup();
-      } catch (error) {
-        console.error("Failed to show context menu:", error);
-      }
+      setNodeMenu({ x: e.clientX, y: e.clientY, nodeText });
     };
 
     try {
@@ -153,6 +162,33 @@ const MindmapViewerComponent = ({ markdown }: MindmapViewerProps) => {
           }}
         />
       </div>
+
+      {nodeMenu && (
+        <>
+          {/* 透明遮罩：点击任意处关闭菜单 */}
+          <div className="fixed inset-0 z-40" onClick={closeNodeMenu} onContextMenu={(e) => e.preventDefault()} />
+          <div
+            className="bg-popover text-popover-foreground fixed z-50 min-w-40 overflow-hidden rounded-md border p-1 shadow-md"
+            style={{ left: nodeMenu.x, top: nodeMenu.y }}
+          >
+            <button
+              type="button"
+              onClick={handleAskAI}
+              className="focus:bg-accent focus:text-accent-foreground flex w-full cursor-default items-center rounded-sm px-2 py-1.5 text-left text-sm outline-hidden select-none"
+            >
+              询问 AI 关于“{nodeMenu.nodeText.slice(0, 20)}
+              {nodeMenu.nodeText.length > 20 ? "..." : ""}”
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyNode}
+              className="focus:bg-accent focus:text-accent-foreground flex w-full cursor-default items-center rounded-sm px-2 py-1.5 text-left text-sm outline-hidden select-none"
+            >
+              复制节点内容
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

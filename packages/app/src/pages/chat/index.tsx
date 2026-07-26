@@ -10,6 +10,7 @@ import { MindmapViewer } from "@/components/tools/mindmap-viewer";
 import { RagResultViewer } from "@/components/tools/rag-result-viewer";
 import { Button } from "@/components/ui/button";
 import { useChatState } from "@/hooks/use-chat-state";
+import { useAutoPreview } from "@/hooks/use-auto-preview";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useChatReaderStore } from "@/store/chat-reader-store";
 import { useThemeStore } from "@/store/theme-store";
@@ -179,6 +180,9 @@ function ChatPage() {
     currentThread: currentThread,
     setCurrentThread: setCurrentThread,
   });
+
+  // AI 回复完成后自动打开可预览代码块的预览面板
+  useAutoPreview(messages, status);
 
   const handleViewToolDetail = (toolPart: any) => {
     scrollContextRef.current?.stopScroll?.();

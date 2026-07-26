@@ -1,6 +1,7 @@
 import HomeLayout from "@/components/home-layout";
 import { NotepadContainer } from "@/components/notepad";
 import NotificationDropdown from "@/components/notification-dropdown";
+import { PreviewPanel } from "@/components/preview/preview-panel";
 import SettingsDialog from "@/components/settings/settings-dialog";
 import SideChat from "@/components/side-chat";
 import VerticalTabBar from "@/components/vertical-tab-bar";
@@ -408,6 +409,7 @@ export default function ReaderLayout() {
                     zIndex: tab.id === activeTabId ? 1 : 0,
                   }}
                 >
+                  {swapSidebars && <PreviewPanel />}
                   {swapSidebars ? chatSidebar : notepadSidebar}
 
                   <div className="relative flex-1 rounded-md border shadow-around">
@@ -419,6 +421,7 @@ export default function ReaderLayout() {
                   </div>
 
                   {swapSidebars ? notepadSidebar : chatSidebar}
+                  {!swapSidebars && <PreviewPanel />}
                 </div>
               </ReaderProvider>
             );
