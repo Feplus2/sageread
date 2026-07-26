@@ -21,11 +21,13 @@
 
 **本次新增完成（2026-07-26）**：
 - **标签栏纵横切换**：仿 Edge 垂直标签页（左侧栏展开 220px/折叠 48px、窄顶条 32px 承载拖拽区域+窗口控件、偏好持久化）；横向标签体验优化（滚轮平滑滚动、激活标签自动滚入视野、溢出左右箭头按钮、中键关闭标签、拖拽排序持久化、静止裁剪视口杜绝标签与顶部按钮重叠/误触）
+- **Books_Converter 整合（除真机端到端外完成）**：Converter 侧 headless CLI 改造（progress_headless.py + pipeline.py --headless）+ PyInstaller onefile sidecar（60MB，无 torch/tkinter）+ 设置页"PDF 转换"（MinerU Token，仅存本机）+ 转换页（流式进度/取消/一键导入图书馆，LLM 复用辅助模型）；cargo check/tsc/biome 通过。**待测：真实 PDF 端到端转换**
+- **多格式导入解锁**：SUPPORTED_FILE_EXTS 放开为 epub/pdf/mobi/cbz/fb2/fbz（对齐 uploadBook 白名单与 DocumentLoader 支持范围；azw/azw3/txt 解析链未接入不开放）。已知降级：非 EPUB 无封面提取、元数据退化为文件名
 
 **后续执行顺序**（按批，估算为 AI 结对工作日）：
 
 1. **第三批·支线中项（已完成）**：会话列表多选管理、对话右键菜单换 HTML、AI 对话网络搜索（Bing+百度+DDG）、批量与智能标签（一书多标签已支持，无需 schema 变更）
-2. **第四批·大件（各 2-3 天）**：Books_Converter 整合（PDF→EPUB→入库，复用辅助模型）、~~标签栏纵横切换~~（已完成）、APP 帮助助手、**全局 Agent 动作工具**（向量化/整理划线/整理标签/备份/同步，见《Agent 架构设想》）
+2. **第四批·大件（各 2-3 天）**：~~Books_Converter 整合（PDF→EPUB→入库，复用辅助模型）~~（已完成 2026-07-26，真机端到端待测）、~~标签栏纵横切换~~（已完成）、APP 帮助助手、**全局 Agent 动作工具**（向量化/整理划线/整理标签/备份/同步，见《Agent 架构设想》）
 3. **等作者**：PR 4（L1 备份）未建分支；PR 5（L2 同步）须 PR 1/3/4 合并后 rebase 再提；作者 3 个月无响应则 fork 转活跃维护版（README 顶部声明 + 发 release + 考虑改名）
 4. **远期不承诺**：P2 路线 B（内嵌 MCP over HTTP）、移动端
 
