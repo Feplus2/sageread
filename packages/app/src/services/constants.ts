@@ -18,8 +18,9 @@ import { stubTranslation as _ } from "@/utils/misc";
 export const LOCAL_BOOKS_SUBDIR = "Readest/Books";
 export const CLOUD_BOOKS_SUBDIR = "Readest/Books";
 
-// export const SUPPORTED_FILE_EXTS = ["epub", "mobi", "azw", "azw3", "fb2", "zip", "cbz", "pdf", "txt"];
-export const SUPPORTED_FILE_EXTS = ["epub"];
+// 与 uploadBook 格式白名单（EPUB/PDF/MOBI/CBZ/FB2/FBZ）及 DocumentLoader 支持范围保持一致；
+// azw/azw3/txt 解析链未接入，暂不开放
+export const SUPPORTED_FILE_EXTS = ["epub", "pdf", "mobi", "cbz", "fb2", "fbz"];
 export const FILE_ACCEPT_FORMATS = SUPPORTED_FILE_EXTS.map((ext) => `.${ext}`).join(", ");
 export const BOOK_UNGROUPED_NAME = "";
 export const BOOK_UNGROUPED_ID = "";
