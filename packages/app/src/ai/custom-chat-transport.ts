@@ -21,6 +21,7 @@ import {
   getSkillsTool,
   mindmapTool,
   notesTool,
+  webSearchTool,
 } from "./tools";
 import { processQuoteMessages, selectValidMessages } from "./utils";
 
@@ -84,6 +85,7 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
       getReadingStats: getReadingStatsTool,
       getSkills: getSkillsTool,
       mindmap: mindmapTool,
+      webSearch: webSearchTool,
     };
 
     if (hasVectorCapability && activeBookId) {

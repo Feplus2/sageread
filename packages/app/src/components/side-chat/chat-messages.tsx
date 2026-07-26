@@ -42,6 +42,7 @@ export const TOOL_NAME_MAP: Record<string, string> = {
   getReadingStats: "阅读统计",
   mindmap: "思维导图",
   getSkills: "技能查询",
+  webSearch: "网络搜索",
 };
 
 interface ChatMessagesProps {
