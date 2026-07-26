@@ -27,6 +27,7 @@ use crate::core::{
         update_reading_session,
     },
     database,
+    converter::{cancel_convert, convert_pdf_to_epub, ConverterState},
     fonts::commands::{upload_and_convert_font, upload_font_data},
     llama::commands::{
         delete_local_model, download_llama_server, download_model_file,
@@ -54,6 +55,7 @@ use crate::core::{
         create_thread, delete_thread, edit_thread, get_all_threads, get_latest_thread_by_book_id,
         get_thread_by_id, get_threads_by_book_id,
     },
+    web_search::web_search,
 };
 use tauri::Manager;
 
@@ -65,6 +67,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::default())
+        .manage(ConverterState::default())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -223,6 +226,10 @@ pub fn run() {
             sync_get_cloud_assets,
             sync_put_ui_config,
             sync_get_ui_config,
+            web_search,
+            // converter (PDF → EPUB)
+            convert_pdf_to_epub,
+            cancel_convert,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

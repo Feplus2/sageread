@@ -137,7 +137,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/woff2_compress"
+      "binaries/woff2_compress",
+      "binaries/books_converter"
     ],
     "resources": [
       "resources/fonts/*"

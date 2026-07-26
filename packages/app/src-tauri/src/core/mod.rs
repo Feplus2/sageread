@@ -1,4 +1,5 @@
 pub mod books;
+pub mod converter;
 pub mod database;
 pub mod fonts;
 pub mod llama;
@@ -8,3 +9,4 @@ pub mod state;
 pub mod sync;
 pub mod tags;
 pub mod threads;
+pub mod web_search;

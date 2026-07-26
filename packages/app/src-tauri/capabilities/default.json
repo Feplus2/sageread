@@ -81,6 +81,26 @@
           "args": true
         }
       ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/books_converter",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-kill",
+      "allow": [
+        {
+          "name": "binaries/books_converter",
+          "sidecar": true,
+          "args": true
+        }
+      ]
     }
   ]
 }
