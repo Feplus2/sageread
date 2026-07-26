@@ -453,6 +453,56 @@ async fn apply_session_insert(
     Ok(())
 }
 
+/// skills：两端各自初始化会自建同名默认技能（id 不同、name 相同），按主键 INSERT 会撞
+/// UNIQUE(name) 索引导致整包失败（真机实证 2067）。本地无此 id 时按 name 找已存在行：
+/// 视为同一技能，LWW 取新则 UPDATE 本地行（保留本地 id），否则跳过
+async fn apply_skill_upsert(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    row: &ChangeRow,
+    applied: &mut AppliedOps,
+) -> Result<(), String> {
+    let table = tables::find_table("skills").unwrap();
+    let data = row.data.as_ref().ok_or("UPSERT 行缺少 data")?;
+
+    if let Some(local_at) = local_updated_at(tx, table, &row.id).await? {
+        // 同 id：标准 LWW
+        if merge::remote_wins(Some(local_at), row.updated_at) {
+            update_row(tx, table, &row.id, data).await?;
+            applied.push((row.table.clone(), row.id.clone(), "UPDATE".to_string()));
+        }
+        return Ok(());
+    }
+
+    // 本地无此 id：可能撞同名（默认技能）→ 按 name 匹配
+    let name = data.get("name").and_then(Value::as_str).unwrap_or("");
+    let existing: Option<(String, Option<i64>)> = if name.is_empty() {
+        None
+    } else {
+        sqlx::query("SELECT id, updated_at FROM skills WHERE name = ?")
+            .bind(name)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| format!("读取本地技能失败: {e}"))?
+            .map(|r| (r.get("id"), r.try_get("updated_at").unwrap_or(None)))
+    };
+
+    match existing {
+        Some((local_id, local_at)) => {
+            if merge::remote_wins(local_at, row.updated_at) {
+                // update_row 不含主键列，本地 id 保留
+                update_row(tx, table, &local_id, data).await?;
+                applied.push((row.table.clone(), local_id, "UPDATE".to_string()));
+            }
+            Ok(())
+        }
+        None => {
+            insert_row(tx, table, data).await?;
+            applied.push((row.table.clone(), row.id.clone(), "INSERT".to_string()));
+            Ok(())
+        }
+    }
+}
+
 fn thread_row_from_data(data: &Value) -> ThreadRowData {
     ThreadRowData {
         id: data_string(data, "id").unwrap_or_default(),
@@ -549,6 +599,7 @@ async fn apply_change_row(
         "threads" => apply_thread_upsert(tx, row, applied).await,
         "book_status" => apply_book_status_upsert(tx, row, applied).await,
         "reading_sessions" => apply_session_insert(tx, row, applied).await,
+        "skills" => apply_skill_upsert(tx, row, applied).await,
         _ => apply_lww_upsert(tx, row, applied).await,
     }
 }
@@ -1987,5 +2038,86 @@ mod tests {
         assert!(!note_pack_failure(&mut state2, "dev-a", 20));
         assert!(!note_pack_failure(&mut state2, "dev-a", 20));
         assert!(note_pack_failure(&mut state2, "dev-a", 20), "第 3 次失败应跳过并告警");
+    }
+
+    /// skills 跨设备同名冲突：本地已有同名默认技能（id 不同），对端同名义 INSERT 按 name 合并 UPDATE
+    #[tokio::test]
+    async fn test_skill_name_conflict_merges_by_name() {
+        let pool = bootstrap_pool(false).await;
+
+        // 本地初始化的默认技能（id 与对端不同、name 相同）
+        sqlx::query("INSERT INTO skills (id, name, content, is_active, is_system, created_at, updated_at) VALUES ('local-sk', '生成思维导图', '旧内容', 1, 1, 1000, 2000)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // 模拟该技能此前已推送过（稳态）：清掉种子行自带的日志，后文才能断言防回环清零
+        sqlx::query("DELETE FROM _sync_log").execute(&pool).await.unwrap();
+
+        let remote = |id: &str, content: &str, updated_at: i64| ChangeRow {
+            table: "skills".to_string(),
+            id: id.to_string(),
+            op: "INSERT".to_string(),
+            updated_at,
+            data: Some(serde_json::json!({
+                "id": id,
+                "name": "生成思维导图",
+                "content": content,
+                "is_active": 1,
+                "is_system": 1,
+                "created_at": 900,
+                "updated_at": updated_at,
+            })),
+        };
+
+        // 对端同名义 INSERT（updated_at 更新）→ 不报错，按 name 合并：内容取远端，id 保本地
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[remote("remote-sk", "新内容", 3000)]))
+            .await
+            .unwrap();
+        assert_eq!(outcome.count, 1);
+        assert_eq!(table_count(&pool, "skills").await, 1, "同名技能应合并为一行");
+        let row = sqlx::query("SELECT id, content FROM skills WHERE name = '生成思维导图'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("id"), "local-sk");
+        assert_eq!(row.get::<String, _>("content"), "新内容");
+        assert_eq!(log_count(&pool).await, 0, "合并写出的日志应被防回环删除");
+
+        // 远端更旧的同名义包 → LWW 不赢，跳过
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[remote("remote-sk", "更旧内容", 2500)]))
+            .await
+            .unwrap();
+        assert_eq!(outcome.count, 0);
+        let row = sqlx::query("SELECT content FROM skills WHERE name = '生成思维导图'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("content"), "新内容");
+
+        // 重放同一包（updated_at 相等）→ 幂等零应用
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[remote("remote-sk", "新内容", 3000)]))
+            .await
+            .unwrap();
+        assert_eq!(outcome.count, 0);
+
+        // 无同名的新技能 INSERT → 正常插入
+        let new_skill = ChangeRow {
+            table: "skills".to_string(),
+            id: "sk-new".to_string(),
+            op: "INSERT".to_string(),
+            updated_at: 4000,
+            data: Some(serde_json::json!({
+                "id": "sk-new",
+                "name": "总结章节",
+                "content": "内容",
+                "is_active": 1,
+                "is_system": 0,
+                "created_at": 4000,
+                "updated_at": 4000,
+            })),
+        };
+        let outcome = apply_changeset(&pool, &changeset_bytes(&[new_skill])).await.unwrap();
+        assert_eq!(outcome.count, 1);
+        assert_eq!(table_count(&pool, "skills").await, 2);
     }
 }

@@ -67,6 +67,45 @@ pub async fn stage_restore(
     Ok(manifest)
 }
 
+/// 数据库的 WAL/SHM 伴生文件路径
+fn db_sidecar_paths(db_path: &Path) -> [std::path::PathBuf; 2] {
+    [db_path.with_extension("db-wal"), db_path.with_extension("db-shm")]
+}
+
+/// 删除数据库的 WAL/SHM 伴生文件（存在才删）。
+/// 替换主文件后必须删除旧 WAL——它是替换前数据库时代的页面镜像，
+/// SQLite 会把它叠在新主文件上重放，恢复后用户看到旧库内容（真机实证）
+fn remove_db_sidecars(db_path: &Path) -> Result<(), String> {
+    for sidecar in db_sidecar_paths(db_path) {
+        if sidecar.exists() {
+            fs::remove_file(&sidecar).map_err(|e| format!("删除旧 WAL/SHM 失败: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// 替换数据库主文件：旧主文件 + WAL/SHM 先备份到 backup_db_dir（WAL 可能含未检查点的最后提交），
+/// staged_db 覆盖主文件后删除新位 WAL/SHM（理由见 remove_db_sidecars）
+fn restore_replace_db(staged_db: &Path, db_path: &Path, backup_db_dir: &Path) -> Result<(), String> {
+    if db_path.exists() {
+        fs::create_dir_all(backup_db_dir).map_err(|e| e.to_string())?;
+        fs::copy(db_path, backup_db_dir.join("app.db")).map_err(|e| e.to_string())?;
+        for sidecar in db_sidecar_paths(db_path) {
+            if sidecar.exists() {
+                let name = sidecar.file_name().ok_or("WAL/SHM 文件名非法")?;
+                fs::copy(&sidecar, backup_db_dir.join(name)).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    if staged_db.exists() {
+        if let Some(parent) = db_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(staged_db, db_path).map_err(|e| e.to_string())?;
+    }
+    remove_db_sidecars(db_path)
+}
+
 /// 恢复第二阶段（启动时、数据库初始化之前调用）：
 /// 先把当前数据完整备份到 restore-backup-{ts}/（回滚保险），再用 staging 内容替换。
 pub fn apply_pending_restore(app: &AppHandle) -> Result<(), String> {
@@ -91,10 +130,6 @@ pub fn apply_pending_restore(app: &AppHandle) -> Result<(), String> {
     fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
 
     let db_path = config_dir.join("database").join("app.db");
-    if db_path.exists() {
-        fs::create_dir_all(backup_dir.join("database")).map_err(|e| e.to_string())?;
-        fs::copy(&db_path, backup_dir.join("database").join("app.db")).map_err(|e| e.to_string())?;
-    }
     for name in JSON_FILES {
         let src = config_dir.join(name);
         if src.exists() {
@@ -106,12 +141,9 @@ pub fn apply_pending_restore(app: &AppHandle) -> Result<(), String> {
         copy_dir_recursive(&themes_dir, &backup_dir.join("themes"))?;
     }
 
-    // 2. 用 staging 内容替换
+    // 2. 用 staging 内容替换（db 的备份+替换+WAL/SHM 清理合一）
     let staged_db = staging.join("app.db");
-    if staged_db.exists() {
-        fs::create_dir_all(config_dir.join("database")).map_err(|e| e.to_string())?;
-        fs::copy(&staged_db, &db_path).map_err(|e| e.to_string())?;
-    }
+    restore_replace_db(&staged_db, &db_path, &backup_dir.join("database"))?;
     for name in JSON_FILES {
         let src = staging.join(name);
         if src.exists() {
@@ -152,6 +184,8 @@ pub fn rollback(app: &AppHandle) -> Result<String, String> {
     let staged_db = src_dir.join("database").join("app.db");
     if staged_db.exists() {
         fs::copy(&staged_db, config_dir.join("database").join("app.db")).map_err(|e| e.to_string())?;
+        // 旧 WAL/SHM 同样不得叠在换回的主文件上（同 apply_pending_restore）
+        remove_db_sidecars(&config_dir.join("database").join("app.db"))?;
     }
     for name in JSON_FILES {
         let src = src_dir.join(name);
@@ -233,8 +267,61 @@ pub fn rollback_to_l2_snapshot(app: &AppHandle, name: &str) -> Result<String, St
         fs::copy(&db_path, &backup_path).map_err(|e| format!("备份当前数据库失败: {e}"))?;
     }
 
-    // 替换数据库
+    // 替换数据库（旧 WAL/SHM 不得叠在快照上重放，同 apply_pending_restore）
     fs::copy(&snapshot_path, &db_path).map_err(|e| format!("替换数据库失败: {e}"))?;
+    remove_db_sidecars(&db_path)?;
 
     Ok("已回滚到同步前快照，请重启应用生效".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::SqlitePool;
+
+    async fn create_marker_db(path: &Path, marker: &str) {
+        let url = format!("sqlite:{}?mode=rwc", path.to_string_lossy().replace('\\', "/"));
+        let pool = SqlitePool::connect(&url).await.unwrap();
+        sqlx::query("CREATE TABLE t (v TEXT)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO t VALUES (?)").bind(marker).execute(&pool).await.unwrap();
+        pool.close().await;
+    }
+
+    /// 回归：替换 app.db 时旧 WAL/SHM 必须删除（否则旧 WAL 叠在新主文件上重放 → 用户看到旧库）
+    #[tokio::test]
+    async fn test_restore_replace_db_removes_wal_shm() {
+        let root = std::env::temp_dir().join(format!("sageread-restore-test-{}", uuid::Uuid::new_v4()));
+        let live_db_dir = root.join("live").join("database");
+        let backup_db_dir = root.join("backup").join("database");
+        fs::create_dir_all(&live_db_dir).unwrap();
+        let live_db = live_db_dir.join("app.db");
+        let staged_db = root.join("staged").join("app.db");
+        fs::create_dir_all(staged_db.parent().unwrap()).unwrap();
+
+        // 旧库（live）+ 旧时代的 WAL/SHM（事故载体；替换流程不读内容，标记字节即可）
+        create_marker_db(&live_db, "old").await;
+        fs::write(live_db_dir.join("app.db-wal"), b"stale-wal").unwrap();
+        fs::write(live_db_dir.join("app.db-shm"), b"stale-shm").unwrap();
+
+        // 快照（staged）
+        create_marker_db(&staged_db, "new").await;
+
+        restore_replace_db(&staged_db, &live_db, &backup_db_dir).unwrap();
+
+        // WAL/SHM 从新位消失，且已备份（可回滚保险）
+        assert!(!live_db_dir.join("app.db-wal").exists(), "旧 WAL 必须删除");
+        assert!(!live_db_dir.join("app.db-shm").exists(), "旧 SHM 必须删除");
+        assert_eq!(fs::read(backup_db_dir.join("app.db-wal")).unwrap(), b"stale-wal");
+        assert_eq!(fs::read(backup_db_dir.join("app.db-shm")).unwrap(), b"stale-shm");
+        assert!(backup_db_dir.join("app.db").exists(), "旧主文件应备份");
+
+        // 新库读出的是快照内容而非旧库
+        let url = format!("sqlite:{}", live_db.to_string_lossy().replace('\\', "/"));
+        let check = SqlitePool::connect(&url).await.unwrap();
+        let row: (String,) = sqlx::query_as("SELECT v FROM t").fetch_one(&check).await.unwrap();
+        assert_eq!(row.0, "new");
+        check.close().await;
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }
