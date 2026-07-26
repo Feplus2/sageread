@@ -12,6 +12,16 @@
 - **真进度**：在某位置**停留 ≥30 秒**才推进"真进度时间戳"；随手乱翻不污染。对端拉到更新的真进度后，若你 60 秒内没翻过页，阅读器自动跟上；否则只 toast 不打扰
 - **删除**：删书进回收站是同步的；回收站里彻底删除也会同步删除他端
 
+## 这台机器上的 SageRead 都是谁（先认清再测试！）
+
+| 身份 | 来源 | 有我们的功能？ | 数据目录 |
+|---|---|---|---|
+| **上游安装版**（2025-10 构建） | `D:\SmallApps\sageread\SageRead.exe` | ❌ 无 WebDAV/同步/回收站等一切 fork 功能 | `%APPDATA%\com.xincmm.sageread\` |
+| **实例 A**（我们的代码） | 主目录 `F:\MyProjects\SageRead` 跑 `pnpm dev` | ✅ 全部 | `%APPDATA%\com.xincmm.sageread.dev\` |
+| **实例 B**（我们的代码） | worktree `F:\MyProjects\SageRead-dev2` 跑 `pnpm dev` | ✅ 全部 | `%APPDATA%\com.xincmm.sageread.dev2\` |
+
+**三次混淆教训（2026-07-27 实录）**：① 以为安装版有 WebDAV——上游原版没有；② 以为 `D:\SmallApps` 的安装版是我们 fork 的构建——实为上游 2025-10 构建；③ 拿 `woff2_compress.exe` 当"我们的构建"的证据——它是上游原有 sidecar。**辨别方法只看三样：exe 路径与构建日期、数据目录是否带 `.dev`、能不能在设置页看到"增量同步"面板。规则：同步测试只认两个 `pnpm dev` 实例，安装版永不参与。**
+
 ## 双实例测试环境怎么搭（已踩坑版）
 
 | | 实例 A | 实例 B |
