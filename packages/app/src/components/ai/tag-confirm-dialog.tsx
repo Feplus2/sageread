@@ -100,8 +100,16 @@ export default function AITagConfirmDialog({
 
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
               {selectableTags.map((tag, index) => (
-                <div key={index} className="flex items-center gap-3 rounded-lg bg-muted p-3 transition-colors">
-                  <Checkbox checked={tag.selected} onCheckedChange={() => toggleTagSelection(index)} />
+                <div
+                  key={index}
+                  className="flex cursor-pointer items-center gap-3 rounded-lg bg-muted p-3 transition-colors hover:bg-muted/70"
+                  onClick={() => toggleTagSelection(index)}
+                >
+                  <Checkbox
+                    checked={tag.selected}
+                    onClick={(e) => e.stopPropagation()}
+                    onCheckedChange={() => toggleTagSelection(index)}
+                  />
                   <div className="flex-1 space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm">{tag.name}</span>

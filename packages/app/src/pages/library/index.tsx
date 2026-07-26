@@ -5,12 +5,18 @@ import { useBookUpload } from "@/hooks/use-book-upload";
 import { useSafeAreaInsets } from "@/hooks/use-safe-areaInsets";
 import { useTheme } from "@/hooks/use-theme";
 import { useUICSS } from "@/hooks/use-ui-css";
+import { updateBook } from "@/services/book-service";
+import { type BookTagSuggestions, generateTagsForBooks } from "@/services/ai-tag-service";
+import { createTag, getTags } from "@/services/tag-service";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useLibraryStore } from "@/store/library-store";
 import clsx from "clsx";
-import { Plus, Upload as UploadIcon } from "lucide-react";
+import { ListChecks, Plus, Sparkles, Tags, Trash2, Upload as UploadIcon, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
+import { toast } from "sonner";
+import BatchAITagDialog, { type BatchAITagSelection } from "./components/batch-ai-tag-dialog";
+import BatchTagDialog from "./components/batch-tag-dialog";
 import BookItem from "./components/book-item";
 import CreateTagDialog from "./components/create-tag-dialog";
 import EditTagDialog from "./components/edit-tag-dialog";
@@ -32,6 +38,116 @@ export default function NewLibraryPage() {
   const isInitiating = useRef(false);
   const [libraryLoaded, setLibraryLoaded] = useState(false);
   const [selectedTagsForDelete, setSelectedTagsForDelete] = useState<string[]>([]);
+
+  // 书籍多选模式
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(new Set());
+  const [batchTagMode, setBatchTagMode] = useState<"add" | "remove" | null>(null);
+  const [isBatchOperating, setIsBatchOperating] = useState(false);
+
+  // AI 智能批量分类
+  const [aiResults, setAiResults] = useState<BookTagSuggestions[]>([]);
+  const [showAIDialog, setShowAIDialog] = useState(false);
+  const [isAIClassifying, setIsAIClassifying] = useState(false);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedBookIds(new Set());
+  }, []);
+
+  const toggleBookSelect = useCallback((bookId: string) => {
+    setSelectedBookIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(bookId)) {
+        next.delete(bookId);
+      } else {
+        next.add(bookId);
+      }
+      return next;
+    });
+  }, []);
+
+  // 批量应用标签（add=并集，remove=差集）
+  const handleBatchApplyTags = useCallback(
+    async (tagIds: string[]) => {
+      if (batchTagMode == null) return;
+      const selectedBooks = booksWithStatus.filter((b) => selectedBookIds.has(b.id));
+      setIsBatchOperating(true);
+      try {
+        for (const book of selectedBooks) {
+          const currentTags = book.tags || [];
+          const newTags =
+            batchTagMode === "add"
+              ? Array.from(new Set([...currentTags, ...tagIds]))
+              : currentTags.filter((t) => !tagIds.includes(t));
+          await updateBook(book.id, { tags: newTags });
+        }
+        await refreshBooks();
+        toast.success(`已为 ${selectedBooks.length} 本书籍${batchTagMode === "add" ? "添加" : "移除"}标签`);
+        exitSelectionMode();
+      } catch (error) {
+        console.error("批量标签失败:", error);
+        toast.error("批量标签失败");
+      } finally {
+        setIsBatchOperating(false);
+      }
+    },
+    [batchTagMode, booksWithStatus, selectedBookIds, refreshBooks, exitSelectionMode],
+  );
+
+  // AI 智能批量分类：对选中书籍生成标签建议
+  const handleAIClassify = useCallback(async () => {
+    const selectedBooks = booksWithStatus.filter((b) => selectedBookIds.has(b.id));
+    if (selectedBooks.length === 0) return;
+
+    setIsAIClassifying(true);
+    try {
+      const existingTags = await getTags();
+      const results = await generateTagsForBooks(selectedBooks, existingTags);
+      setAiResults(results);
+      setShowAIDialog(true);
+    } catch (error) {
+      console.error("AI 分类失败:", error);
+      toast.error(error instanceof Error ? error.message : "AI 分类失败");
+    } finally {
+      setIsAIClassifying(false);
+    }
+  }, [booksWithStatus, selectedBookIds]);
+
+  // 应用 AI 分类结果（现有标签直接关联，新标签先创建再关联）
+  const handleApplyAITags = useCallback(
+    async (selections: BatchAITagSelection[]) => {
+      setIsBatchOperating(true);
+      try {
+        for (const sel of selections) {
+          const tagIds: string[] = [];
+          for (const tag of sel.tags) {
+            if (tag.isExisting && tag.existingTagId) {
+              tagIds.push(tag.existingTagId);
+            } else {
+              const newTag = await createTag({
+                name: tag.name,
+                color: `#${Math.floor(Math.random() * 16777215).toString(16)}`,
+              });
+              tagIds.push(newTag.id);
+            }
+          }
+          const currentTags = sel.book.tags || [];
+          const newTags = Array.from(new Set([...currentTags, ...tagIds]));
+          await updateBook(sel.book.id, { tags: newTags });
+        }
+        await refreshBooks();
+        toast.success(`已为 ${selections.length} 本书籍应用 AI 标签`);
+        exitSelectionMode();
+      } catch (error) {
+        console.error("应用 AI 标签失败:", error);
+        toast.error("应用 AI 标签失败");
+      } finally {
+        setIsBatchOperating(false);
+      }
+    },
+    [refreshBooks, exitSelectionMode],
+  );
 
   // 从URL获取选中的标签
   const selectedTagFromUrl = searchParams.get("tag") || "all";
@@ -121,19 +237,40 @@ export default function NewLibraryPage() {
               ? "我的图书"
               : tags.find((t) => t.id === selectedTagFromUrl)?.name || "我的图书"}
           </h3>
-          <Button onClick={triggerFileSelect} disabled={isUploading} variant="soft" size="sm">
-            {isUploading ? (
-              <>
-                <div className="h-4 w-4 animate-spin rounded-full border border-white/30 border-t-white" />
-                上传中...
-              </>
-            ) : (
-              <>
-                <Plus size={16} />
-                添加书籍
-              </>
+          <div className="flex items-center gap-2">
+            {hasBooks && (
+              <Button
+                variant={selectionMode ? "default" : "outline"}
+                size="sm"
+                onClick={() => (selectionMode ? exitSelectionMode() : setSelectionMode(true))}
+              >
+                {selectionMode ? (
+                  <>
+                    <X size={16} />
+                    退出多选
+                  </>
+                ) : (
+                  <>
+                    <ListChecks size={16} />
+                    多选
+                  </>
+                )}
+              </Button>
             )}
-          </Button>
+            <Button onClick={triggerFileSelect} disabled={isUploading} variant="soft" size="sm">
+              {isUploading ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border border-white/30 border-t-white" />
+                  上传中...
+                </>
+              ) : (
+                <>
+                  <Plus size={16} />
+                  添加书籍
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
         {isLoading && (
@@ -162,6 +299,9 @@ export default function NewLibraryPage() {
                       onDelete={handleBookDelete}
                       onUpdate={handleBookUpdate}
                       onRefresh={refreshBooks}
+                      selectionMode={selectionMode}
+                      isSelected={selectedBookIds.has(book.id)}
+                      onToggleSelect={toggleBookSelect}
                     />
                   ))}
                 </div>
@@ -176,6 +316,9 @@ export default function NewLibraryPage() {
                       onDelete={handleBookDelete}
                       onUpdate={handleBookUpdate}
                       onRefresh={refreshBooks}
+                      selectionMode={selectionMode}
+                      isSelected={selectedBookIds.has(book.id)}
+                      onToggleSelect={toggleBookSelect}
                     />
                   ))}
                 </div>
@@ -192,7 +335,82 @@ export default function NewLibraryPage() {
             <Upload />
           </div>
         )}
+
+        {selectionMode && (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t px-3 py-2 dark:border-neutral-700">
+            <span className="text-neutral-600 text-sm dark:text-neutral-400">已选 {selectedBookIds.size} 本</span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setSelectedBookIds(
+                    selectedBookIds.size === visibleBooks.length
+                      ? new Set()
+                      : new Set(visibleBooks.map((b) => b.id)),
+                  )
+                }
+              >
+                {selectedBookIds.size === visibleBooks.length ? "取消全选" : "全选"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={selectedBookIds.size === 0 || isBatchOperating}
+                onClick={() => setBatchTagMode("add")}
+              >
+                <Tags size={16} />
+                添加标签
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={selectedBookIds.size === 0 || isBatchOperating}
+                onClick={() => setBatchTagMode("remove")}
+              >
+                <Trash2 size={16} />
+                移除标签
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={selectedBookIds.size === 0 || isBatchOperating || isAIClassifying}
+                onClick={handleAIClassify}
+              >
+                {isAIClassifying ? (
+                  <>
+                    <div className="h-4 w-4 animate-spin rounded-full border border-current/30 border-t-current" />
+                    分类中...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={16} />
+                    AI 分类
+                  </>
+                )}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={exitSelectionMode} disabled={isBatchOperating}>
+                取消
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
+
+      <BatchTagDialog
+        isOpen={batchTagMode != null}
+        onClose={() => setBatchTagMode(null)}
+        mode={batchTagMode ?? "add"}
+        bookCount={selectedBookIds.size}
+        onApply={handleBatchApplyTags}
+      />
+
+      <BatchAITagDialog
+        isOpen={showAIDialog}
+        onClose={() => setShowAIDialog(false)}
+        results={aiResults}
+        onApply={handleApplyAITags}
+      />
 
       <CreateTagDialog
         isOpen={showNewTagDialog}

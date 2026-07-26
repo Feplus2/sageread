@@ -1,7 +1,5 @@
 import { deleteTag, getTagByName } from "@/services/tag-service";
 import type { BookWithStatusAndUrls } from "@/types/simple-book";
-import { Menu } from "@tauri-apps/api/menu";
-import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { useCallback, useState } from "react";
 import type { BookTag } from "./use-tags-management";
@@ -176,81 +174,10 @@ export const useTagsOperations = ({
     setEditingTag(null);
   }, []);
 
-  const handleTagContextMenu = useCallback(
-    async (e: React.MouseEvent, tag: BookTag) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // 如果有多选标签，显示批量删除菜单
-      if (selectedTagsForDelete.length > 0) {
-        // 检查是否所有选中的标签都可以删除
-        const canDeleteAll = selectedTagsForDelete.every((tagId) => tagId !== "all" && tagId !== "uncategorized");
-
-        if (!canDeleteAll) {
-          return; // 如果包含不可删除的标签，不显示菜单
-        }
-
-        try {
-          const menu = await Menu.new({
-            items: [
-              {
-                id: "batch-delete-tags",
-                text: `删除 ${selectedTagsForDelete.length} 个标签`,
-                action: () => {
-                  if (handleBatchDeleteTags) {
-                    handleBatchDeleteTags();
-                  }
-                },
-              },
-            ],
-          });
-
-          await menu.popup(new LogicalPosition(e.clientX, e.clientY));
-        } catch (error) {
-          console.error("Failed to show batch delete menu:", error);
-        }
-        return;
-      }
-
-      // 单个标签的右键菜单
-      // 不允许删除特殊标签
-      if (tag.id === "all" || tag.id === "uncategorized") {
-        return;
-      }
-
-      try {
-        const menu = await Menu.new({
-          items: [
-            {
-              id: "edit-tag",
-              text: "管理书籍",
-              action: () => {
-                handleEditTag(tag);
-              },
-            },
-            {
-              id: "delete-tag",
-              text: "删除标签",
-              action: () => {
-                handleDeleteTag(tag);
-              },
-            },
-          ],
-        });
-
-        await menu.popup(new LogicalPosition(e.clientX, e.clientY));
-      } catch (error) {
-        console.error("Failed to show tag context menu:", error);
-      }
-    },
-    [handleEditTag, handleDeleteTag, selectedTagsForDelete, handleBatchDeleteTags],
-  );
-
   return {
     handleDeleteTag,
     handleEditTag,
     handleEditTagCancel,
-    handleTagContextMenu,
     handleBatchDeleteTags,
     editingTag,
   };

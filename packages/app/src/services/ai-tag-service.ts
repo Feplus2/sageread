@@ -206,3 +206,38 @@ ${existingTagsText}
     throw new Error("AI生成标签失败: 未知错误");
   }
 }
+
+/** 批量分类结果：每本书的标签建议 */
+export interface BookTagSuggestions {
+  book: SimpleBook;
+  suggestions: AITagSuggestion[];
+  error?: string;
+}
+
+/**
+ * 对多本书批量生成标签建议（逐本调用，单本失败不中断整批）
+ * onProgress 回调报告进度（已处理本数 / 总本数）
+ */
+export async function generateTagsForBooks(
+  books: SimpleBook[],
+  existingTags: Tag[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<BookTagSuggestions[]> {
+  const results: BookTagSuggestions[] = [];
+  for (let i = 0; i < books.length; i++) {
+    const book = books[i];
+    try {
+      const resp = await generateTagsWithAI(book, existingTags);
+      results.push({ book, suggestions: resp.suggestions });
+    } catch (error) {
+      console.error(`AI 分类失败《${book.title}》:`, error);
+      results.push({
+        book,
+        suggestions: [],
+        error: error instanceof Error ? error.message : "未知错误",
+      });
+    }
+    onProgress?.(i + 1, books.length);
+  }
+  return results;
+}

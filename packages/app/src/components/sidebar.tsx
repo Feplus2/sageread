@@ -71,7 +71,7 @@ export default function Sidebar() {
     };
   }, [selectedTagsForDelete]);
 
-  const { handleTagContextMenu, handleEditTagCancel, editingTag } = useTagsOperations({
+  const { handleEditTagCancel, editingTag, handleEditTag, handleDeleteTag, handleBatchDeleteTags } = useTagsOperations({
     booksWithStatus,
     handleBookUpdate,
     refreshBooks,
@@ -214,7 +214,9 @@ export default function Sidebar() {
                     selectedTag={selectedTagFromUrl}
                     selectedTagsForDelete={selectedTagsForDelete}
                     handleTagClick={handleTagClick}
-                    handleTagContextMenu={handleTagContextMenu}
+                    handleEditTag={handleEditTag}
+                    handleDeleteTag={handleDeleteTag}
+                    handleBatchDeleteTags={handleBatchDeleteTags}
                     handleNewTagClick={handleNewTagClick}
                     books={booksWithStatus}
                     onBookUpdate={handleBookUpdate}

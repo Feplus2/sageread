@@ -1,4 +1,14 @@
 import AITagConfirmDialog from "@/components/ai/tag-confirm-dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { useDownloadImage } from "@/hooks/use-download-image";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import type { BookTag } from "@/pages/library/hooks/use-tags-management";
@@ -6,18 +16,16 @@ import { type AITagSuggestion, generateTagsWithAI } from "@/services/ai-tag-serv
 import { updateBookVectorizationMeta } from "@/services/book-service";
 import { type EpubIndexResult, indexEpub } from "@/services/book-service";
 import { syncDownloadBook } from "@/services/sync-service";
-import { createTag, getTags } from "@/services/tag-service";
+import { createTag, getTags, type Tag } from "@/services/tag-service";
 import { useLayoutStore } from "@/store/layout-store";
 import { useNotificationStore } from "@/store/notification-store";
 import type { BookWithStatusAndUrls } from "@/types/simple-book";
 import { getCurrentVectorModelConfig } from "@/utils/model";
 import { appDataDir } from "@tauri-apps/api/path";
 import { listen } from "@tauri-apps/api/event";
-import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
-import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { exists } from "@tauri-apps/plugin-fs";
-import { Cloud, MoreHorizontal } from "lucide-react";
+import { Check, Cloud, MoreHorizontal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import EditInfo from "./edit-info";
@@ -37,9 +45,22 @@ interface BookItemProps {
   onDelete?: (book: BookWithStatusAndUrls) => Promise<boolean>;
   onUpdate?: (bookId: string, updates: BookUpdateData) => Promise<boolean>;
   onRefresh?: () => Promise<void>;
+  /** 多选模式：点击切换选中而非打开，并显示勾选框 */
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (bookId: string) => void;
 }
 
-export default function BookItem({ book, availableTags = [], onDelete, onUpdate, onRefresh }: BookItemProps) {
+export default function BookItem({
+  book,
+  availableTags = [],
+  onDelete,
+  onUpdate,
+  onRefresh,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+}: BookItemProps) {
   const [showEditDialog, setShowEditDialog] = useState(false);
   const { downloadImage } = useDownloadImage();
 
@@ -50,6 +71,17 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
   const { selectedModel } = useModelSelector();
   const [showEmbeddingDialog, setShowEmbeddingDialog] = useState(false);
   const [vectorizeProgress, setVectorizeProgress] = useState<number | null>(null);
+
+  // 数据库标签（供右键菜单“管理标签”子菜单映射真实标签 ID）
+  const [databaseTags, setDatabaseTags] = useState<Tag[]>([]);
+  useEffect(() => {
+    getTags()
+      .then(setDatabaseTags)
+      .catch((e) => console.error("加载标签失败:", e));
+  }, []);
+
+  // 右键菜单受控开关（MoreHorizontal 图标点击也可打开）
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -88,6 +120,11 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
   }, [book.filePath]);
 
   const handleClick = useCallback(async () => {
+    // 多选模式下点击切换选中，不打开书籍
+    if (selectionMode) {
+      onToggleSelect?.(book.id);
+      return;
+    }
     if (isCloudOnly) {
       setIsDownloading(true);
       try {
@@ -104,7 +141,7 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
     } else {
       openBook(book.id, book.title);
     }
-  }, [book.id, book.title, isCloudOnly, openBook]);
+  }, [book.id, book.title, isCloudOnly, openBook, selectionMode, onToggleSelect]);
 
   const handleAIGenerateTags = useCallback(async () => {
     if (!selectedModel) {
@@ -372,235 +409,131 @@ export default function BookItem({ book, availableTags = [], onDelete, onUpdate,
     );
   };
 
-  const handleMenuClick = useCallback(
-    async (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+  const isUnread = !book.status || book.status.status === "unread";
+  const currentTags = book.tags || [];
+  const vectorMeta = book.status?.metadata?.vectorization;
+  const isVectorized = vectorMeta?.status === "success";
+  const tagOptions = availableTags.filter((tag) => tag.id !== "all" && tag.id !== "uncategorized");
 
-      try {
-        const separator1 = await PredefinedMenuItem.new({ text: "separator-1", item: "Separator" });
-        const separator2 = await PredefinedMenuItem.new({ text: "separator-2", item: "Separator" });
-        const separator3 = await PredefinedMenuItem.new({ text: "separator-3", item: "Separator" });
-
-        const isUnread = !book.status || book.status.status === "unread";
-        const markStatusItem = {
-          id: isUnread ? "mark-read" : "mark-unread",
-          text: isUnread ? "标记为已读" : "标记为未读",
-          action: () => {
-            if (isUnread) {
-              console.log("Mark as Read clicked");
-            } else {
-              console.log("Mark as Unread clicked");
-            }
-          },
-        };
-
-        const currentTags = book.tags || [];
-
-        const allTagMenuItems: any[] = [];
-
-        const aiGenerateItem = await MenuItem.new({
-          id: "ai-generate-tags",
-          text: "AI 生成",
-          action: () => {
-            handleAIGenerateTags();
-          },
-        });
-        allTagMenuItems.push(aiGenerateItem);
-
-        if (availableTags.length > 0) {
-          const aiSeparator = await PredefinedMenuItem.new({ text: "ai-separator", item: "Separator" });
-          allTagMenuItems.push(aiSeparator);
-          const databaseTags = await getTags();
-          const tagMenuItems = await Promise.all(
-            availableTags
-              .filter((tag) => tag.id !== "all" && tag.id !== "uncategorized")
-              .map(async (tag) => {
-                const tagName = tag.id.startsWith("tag-") ? tag.id.replace("tag-", "") : tag.name;
-                const dbTag = databaseTags.find((t) => t.name === tagName);
-                const realTagId = dbTag?.id;
-                const hasTag = realTagId ? currentTags.includes(realTagId) : false;
-
-                return await MenuItem.new({
-                  id: `tag-${tag.id}`,
-                  text: `${hasTag ? "✓ " : ""}${tagName}`,
-                  action: () => {
-                    if (realTagId) {
-                      handleTagToggle(realTagId);
-                    }
-                  },
-                });
-              }),
-          );
-
-          allTagMenuItems.push(...tagMenuItems);
-        }
-
-        const tagsSubmenu = await Submenu.new({
-          text: "管理标签",
-          items: allTagMenuItems,
-        });
-
-        const vectorMeta = book.status?.metadata?.vectorization;
-        const isVectorized = vectorMeta?.status === "success";
-
-        const vectorizeSubmenuItems = [];
-
-        if (isVectorized) {
-          vectorizeSubmenuItems.push(
-            await MenuItem.new({
-              id: "vector-info",
-              text: "✓ 已向量化",
-              enabled: false,
-            }),
-            await MenuItem.new({
-              id: "vector-model",
-              text: `模型: ${vectorMeta?.model || "未知"}`,
-              enabled: false,
-            }),
-            await MenuItem.new({
-              id: "vector-dimension",
-              text: `维度: ${vectorMeta?.dimension || 0}`,
-              enabled: false,
-            }),
-            await MenuItem.new({
-              id: "vector-chunks",
-              text: `分块: ${vectorMeta?.chunkCount || 0}`,
-              enabled: false,
-            }),
-          );
-        }
-
-        vectorizeSubmenuItems.push(
-          await MenuItem.new({
-            id: "vectorize-epub",
-            text: isVectorized ? "重新向量化" : "开始向量化",
-            action: async () => {
-              await handleVectorizeBook();
-            },
-          }),
-          await MenuItem.new({
-            id: "test-vector",
-            text: "向量化测试",
-            action: () => {
-              setShowEmbeddingDialog(true);
-            },
-          }),
-        );
-
-        const vectorizeSubmenu = await Submenu.new({
-          text: `${isVectorized ? "✓ " : ""}向量化`,
-          items: vectorizeSubmenuItems,
-        });
-
-        const menu = await Menu.new({
-          items: [
-            {
-              id: "open",
-              text: "打开",
-              action: () => {
-                handleClick();
-              },
-            },
-            vectorizeSubmenu,
-            separator1,
-            {
-              id: "edit",
-              text: "编辑信息",
-              action: () => {
-                setShowEditDialog(true);
-              },
-            },
-            ...(book.coverUrl
-              ? [
-                  {
-                    id: "download-image",
-                    text: "下载图片",
-                    action: () => {
-                      handleDownloadImage();
-                    },
-                  },
-                ]
-              : []),
-            tagsSubmenu,
-            separator2,
-            markStatusItem,
-            separator3,
-            {
-              id: "delete",
-              text: "删除",
-              action: () => {
-                handleNativeDelete();
-              },
-            },
-          ],
-        });
-
-        await menu.popup(new LogicalPosition(e.clientX, e.clientY));
-      } catch (error) {
-        console.error("Failed to show native menu:", error);
-      }
-    },
-    [
-      handleClick,
-      handleNativeDelete,
-      handleDownloadImage,
-      handleTagToggle,
-      handleAIGenerateTags,
-      handleVectorizeBook,
-      book.coverUrl,
-      book.status,
-      availableTags,
-      book.tags,
-    ],
+  const menuContent = (
+    <ContextMenuContent>
+      <ContextMenuItem onClick={() => handleClick()}>打开</ContextMenuItem>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>{isVectorized ? "✓ 向量化" : "向量化"}</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          {isVectorized && (
+            <>
+              <ContextMenuItem disabled>✓ 已向量化</ContextMenuItem>
+              <ContextMenuItem disabled>模型: {vectorMeta?.model || "未知"}</ContextMenuItem>
+              <ContextMenuItem disabled>维度: {vectorMeta?.dimension || 0}</ContextMenuItem>
+              <ContextMenuItem disabled>分块: {vectorMeta?.chunkCount || 0}</ContextMenuItem>
+            </>
+          )}
+          <ContextMenuItem onClick={() => void handleVectorizeBook()}>
+            {isVectorized ? "重新向量化" : "开始向量化"}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => setShowEmbeddingDialog(true)}>向量化测试</ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => setShowEditDialog(true)}>编辑信息</ContextMenuItem>
+      {book.coverUrl && <ContextMenuItem onClick={() => handleDownloadImage()}>下载图片</ContextMenuItem>}
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>管理标签</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          <ContextMenuItem onClick={() => handleAIGenerateTags()}>AI 生成</ContextMenuItem>
+          {tagOptions.length > 0 && <ContextMenuSeparator />}
+          {tagOptions.map((tag) => {
+            const tagName = tag.id.startsWith("tag-") ? tag.id.replace("tag-", "") : tag.name;
+            const dbTag = databaseTags.find((t) => t.name === tagName);
+            const realTagId = dbTag?.id;
+            const hasTag = realTagId ? currentTags.includes(realTagId) : false;
+            return (
+              <ContextMenuItem key={tag.id} onClick={() => realTagId && handleTagToggle(realTagId)}>
+                {hasTag ? `✓ ${tagName}` : tagName}
+              </ContextMenuItem>
+            );
+          })}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => console.log(isUnread ? "Mark as Read clicked" : "Mark as Unread clicked")}>
+        {isUnread ? "标记为已读" : "标记为未读"}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem variant="destructive" onClick={() => handleNativeDelete()}>
+        删除
+      </ContextMenuItem>
+    </ContextMenuContent>
   );
 
   return (
     <>
-      <div className="group cursor-pointer" onClick={handleClick}>
-        <div
-          onContextMenu={handleMenuClick}
-          data-region="book-card"
-          className="rounded-r-2xl rounded-l-md border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-neutral-700 dark:bg-neutral-800"
-        >
-          <div className="relative p-2 pb-0">
-            <div className="mb-2">
-              <h4 className="truncate text-neutral-600 text-sm leading-tight dark:text-neutral-200">{book.title}</h4>
-            </div>
+      <ContextMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <ContextMenuTrigger asChild>
+          <div className="group cursor-pointer" onClick={handleClick}>
+            <div
+              data-region="book-card"
+              className="rounded-r-2xl rounded-l-md border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-neutral-700 dark:bg-neutral-800"
+            >
+              <div className="relative p-2 pb-0">
+                <div className="mb-2">
+                  <h4 className="truncate text-neutral-600 text-sm leading-tight dark:text-neutral-200">{book.title}</h4>
+                </div>
 
-            <div data-region="book-cover" className="relative aspect-[4/5] w-full overflow-hidden">
-              {book.coverUrl ? (
-                <img src={book.coverUrl} alt={book.title} className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-100 to-neutral-300 dark:from-neutral-700 dark:to-neutral-800">
-                  <div className="p-4 text-center">
-                    <div className="mb-2 font-bold text-2xl text-neutral-500 dark:text-neutral-400">📖</div>
-                    <div className="line-clamp-3 text-neutral-600 text-xs dark:text-neutral-300">{book.title}</div>
-                  </div>
+                <div data-region="book-cover" className="relative aspect-[4/5] w-full overflow-hidden">
+                  {book.coverUrl ? (
+                    <img src={book.coverUrl} alt={book.title} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-100 to-neutral-300 dark:from-neutral-700 dark:to-neutral-800">
+                      <div className="p-4 text-center">
+                        <div className="mb-2 font-bold text-2xl text-neutral-500 dark:text-neutral-400">📖</div>
+                        <div className="line-clamp-3 text-neutral-600 text-xs dark:text-neutral-300">{book.title}</div>
+                      </div>
+                    </div>
+                  )}
+                  {isCloudOnly && (
+                    <div className="absolute top-1 right-1 rounded-full bg-black/60 p-1" title="仅在云端，点击打开时自动下载">
+                      <Cloud size={12} className="text-white" />
+                    </div>
+                  )}
+                  {isDownloading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                      <span className="text-white text-xs">下载中...</span>
+                    </div>
+                  )}
+                  {selectionMode && (
+                    <div
+                      className={`absolute top-1 left-1 flex size-5 items-center justify-center rounded border transition-colors ${
+                        isSelected
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-neutral-300 bg-white/80 dark:border-neutral-500 dark:bg-neutral-800/80"
+                      }`}
+                    >
+                      {isSelected && <Check size={14} />}
+                    </div>
+                  )}
                 </div>
-              )}
-              {isCloudOnly && (
-                <div className="absolute top-1 right-1 rounded-full bg-black/60 p-1" title="仅在云端，点击打开时自动下载">
-                  <Cloud size={12} className="text-white" />
+              </div>
+
+              <div className="flex h-8 items-center justify-between space-x-2 p-2 py-0">
+                <div className="flex-1">{renderProgress()}</div>
+                <div className="flex items-center gap-2">
+                  {renderVectorizationStatus()}
+                  <MoreHorizontal
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(true);
+                    }}
+                    className="h-4 w-4 text-neutral-500 dark:text-neutral-400"
+                  />
                 </div>
-              )}
-              {isDownloading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                  <span className="text-white text-xs">下载中...</span>
-                </div>
-              )}
+              </div>
             </div>
           </div>
-
-          <div className="flex h-8 items-center justify-between space-x-2 p-2 py-0">
-            <div className="flex-1">{renderProgress()}</div>
-            <div className="flex items-center gap-2">
-              {renderVectorizationStatus()}
-              <MoreHorizontal onClick={handleMenuClick} className="h-4 w-4 text-neutral-500 dark:text-neutral-400" />
-            </div>
-          </div>
-        </div>
-      </div>
+        </ContextMenuTrigger>
+        {menuContent}
+      </ContextMenu>
 
       <EditInfo book={book} isOpen={showEditDialog} onClose={() => setShowEditDialog(false)} onSave={onUpdate} />
 

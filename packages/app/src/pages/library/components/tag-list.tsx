@@ -1,3 +1,9 @@
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import type { BookWithStatusAndUrls } from "@/types/simple-book";
 import clsx from "clsx";
 import { Plus } from "lucide-react";
@@ -10,7 +16,9 @@ interface TagListProps {
   selectedTag: string;
   selectedTagsForDelete: string[];
   handleTagClick: (tagId: string, event: React.MouseEvent) => void;
-  handleTagContextMenu: (e: React.MouseEvent, tag: BookTag) => void;
+  handleEditTag: (tag: BookTag) => void;
+  handleDeleteTag: (tag: BookTag) => void;
+  handleBatchDeleteTags: () => void;
   handleNewTagClick: () => void;
   books: BookWithStatusAndUrls[];
   onBookUpdate: (bookId: string, updates: { tags?: string[] }) => Promise<boolean>;
@@ -22,7 +30,9 @@ export default function TagList({
   selectedTag,
   selectedTagsForDelete,
   handleTagClick,
-  handleTagContextMenu,
+  handleEditTag,
+  handleDeleteTag,
+  handleBatchDeleteTags,
   handleNewTagClick,
   // books,
   // onBookUpdate,
@@ -71,12 +81,16 @@ export default function TagList({
   const renderTagButton = useCallback(
     (tag: BookTag) => {
       const isSelected = selectedTagsForDelete.includes(tag.id);
+      const isSpecial = tag.id === "all" || tag.id === "uncategorized";
+      // 多选模式下：全部选中项可删才显示批量删除菜单
+      const canBatchDelete =
+        selectedTagsForDelete.length > 0 &&
+        selectedTagsForDelete.every((tagId) => tagId !== "all" && tagId !== "uncategorized");
 
-      return (
+      const button = (
         <button
           key={tag.id}
           onClick={(e) => handleTagClick(tag.id, e)}
-          onContextMenu={(e) => handleTagContextMenu(e, tag)}
           className={clsx(
             "flex w-full select-none items-center justify-between rounded-md px-2 py-1 pr-3 text-left text-sm transition-colors hover:bg-border",
             isSelected
@@ -93,8 +107,33 @@ export default function TagList({
           <span className="font-normal text-neutral-500 text-xs dark:text-neutral-400">{tag.count}</span>
         </button>
       );
+
+      // 特殊标签且非批量删除场景：不挂右键菜单
+      if (isSpecial && !canBatchDelete) {
+        return button;
+      }
+
+      return (
+        <ContextMenu key={tag.id}>
+          <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
+          <ContextMenuContent>
+            {canBatchDelete ? (
+              <ContextMenuItem variant="destructive" onClick={() => handleBatchDeleteTags()}>
+                删除 {selectedTagsForDelete.length} 个标签
+              </ContextMenuItem>
+            ) : (
+              <>
+                <ContextMenuItem onClick={() => handleEditTag(tag)}>管理书籍</ContextMenuItem>
+                <ContextMenuItem variant="destructive" onClick={() => handleDeleteTag(tag)}>
+                  删除标签
+                </ContextMenuItem>
+              </>
+            )}
+          </ContextMenuContent>
+        </ContextMenu>
+      );
     },
-    [selectedTag, selectedTagsForDelete, handleTagClick, handleTagContextMenu],
+    [selectedTag, selectedTagsForDelete, handleTagClick, handleEditTag, handleDeleteTag, handleBatchDeleteTags],
   );
 
   return (

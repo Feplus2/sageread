@@ -1,11 +1,15 @@
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDownloadImage } from "@/hooks/use-download-image";
 import type { BookWithStatusAndUrls } from "@/types/simple-book";
-import { Menu } from "@tauri-apps/api/menu";
-import { LogicalPosition } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Upload, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -84,34 +88,6 @@ export default function EditInfo({ book, isOpen, onClose, onSave }: EditInfoProp
     setCoverPreview(null);
   }, []);
 
-  // 显示自定义图片右键菜单
-  const showCustomImageMenu = useCallback(
-    async (event: React.MouseEvent<HTMLImageElement>) => {
-      event.preventDefault();
-
-      const imageUrl = (event.target as HTMLImageElement).src;
-
-      try {
-        const menu = await Menu.new({
-          items: [
-            {
-              id: "download-image",
-              text: "下载图片",
-              action: () => {
-                handleImageDownload(imageUrl);
-              },
-            },
-          ],
-        });
-
-        await menu.popup(new LogicalPosition(event.clientX, event.clientY));
-      } catch (error) {
-        console.error("Failed to show image context menu:", error);
-      }
-    },
-    [handleImageDownload],
-  );
-
   const handleSave = useCallback(async () => {
     if (!onSave) return;
 
@@ -176,12 +152,16 @@ export default function EditInfo({ book, isOpen, onClose, onSave }: EditInfoProp
                   <div className="aspect-[3/4] w-30">
                     {getCurrentCover() ? (
                       <>
-                        <img
-                          src={getCurrentCover()!}
-                          alt={title}
-                          className="h-full w-full object-cover"
-                          onContextMenu={showCustomImageMenu}
-                        />
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>
+                            <img src={getCurrentCover()!} alt={title} className="h-full w-full object-cover" />
+                          </ContextMenuTrigger>
+                          <ContextMenuContent>
+                            <ContextMenuItem onClick={() => handleImageDownload(getCurrentCover()!)}>
+                              下载图片
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
                         {coverPreview && (
                           <button
                             onClick={handleRemoveCover}

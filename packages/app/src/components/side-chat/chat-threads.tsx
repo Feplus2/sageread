@@ -1,4 +1,11 @@
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useThreads } from "@/hooks/use-threads";
@@ -7,11 +14,9 @@ import { exportThreadToImage } from "@/lib/export-thread-image";
 import { exportThreadToMarkdown } from "@/lib/export-thread-markdown";
 import { getThreadById } from "@/services/thread-service";
 import type { ThreadSummary } from "@/types/thread";
-import { Menu } from "@tauri-apps/api/menu";
-import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import dayjs from "dayjs";
-import { ArrowLeft, MessageCircle, Star } from "lucide-react";
+import { ArrowLeft, Check, Download, ListChecks, MessageCircle, Star, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -36,7 +41,42 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
   const [renameTitle, setRenameTitle] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
 
+  // 多选模式
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBatchOperating, setIsBatchOperating] = useState(false);
+
   const sortedThreads = threads;
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const toggleSelect = useCallback((threadId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  }, []);
+
+  const allSelected = useMemo(
+    () => threads.length > 0 && threads.every((t) => selectedIds.has(t.id)),
+    [threads, selectedIds],
+  );
+
+  const handleSelectAll = useCallback(() => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(threads.map((t) => t.id)));
+    }
+  }, [allSelected, threads]);
 
   const handleNativeDelete = useCallback(
     async (thread: ThreadSummary) => {
@@ -55,6 +95,72 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
     },
     [deleteThreadFn],
   );
+
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      const confirmed = await ask(`确定要删除选中的 ${selectedIds.size} 个对话吗？\n\n此操作无法撤销。`, {
+        title: "确认批量删除",
+        kind: "warning",
+      });
+      if (!confirmed) return;
+
+      setIsBatchOperating(true);
+      for (const id of selectedIds) {
+        await deleteThreadFn(id);
+      }
+      exitSelectionMode();
+    } catch (error) {
+      console.error("批量删除失败:", error);
+      toast.error("批量删除失败");
+    } finally {
+      setIsBatchOperating(false);
+    }
+  }, [selectedIds, deleteThreadFn, exitSelectionMode]);
+
+  const handleBatchStar = useCallback(async () => {
+    const selectedThreads = threads.filter((t) => selectedIds.has(t.id));
+    if (selectedThreads.length === 0) return;
+
+    // 全部已星标则取消，否则全部星标
+    const allStarred = selectedThreads.every((t) => t.starred);
+    setIsBatchOperating(true);
+    try {
+      for (const thread of selectedThreads) {
+        const shouldStar = !allStarred;
+        if (!!thread.starred !== shouldStar) {
+          await toggleStarFn(thread);
+        }
+      }
+      exitSelectionMode();
+    } catch (error) {
+      console.error("批量星标失败:", error);
+      toast.error("批量星标失败");
+    } finally {
+      setIsBatchOperating(false);
+    }
+  }, [threads, selectedIds, toggleStarFn, exitSelectionMode]);
+
+  const handleBatchExport = useCallback(async () => {
+    const selectedThreads = threads.filter((t) => selectedIds.has(t.id));
+    if (selectedThreads.length === 0) return;
+
+    setIsBatchOperating(true);
+    try {
+      // 每个对话各自导出为一个 Markdown 文件
+      for (const thread of selectedThreads) {
+        const fullThread = await getThreadById(thread.id);
+        await exportThreadToMarkdown(fullThread);
+      }
+      toast.success(`已导出 ${selectedThreads.length} 个对话`);
+      exitSelectionMode();
+    } catch (error) {
+      console.error("批量导出失败:", error);
+      toast.error("批量导出失败");
+    } finally {
+      setIsBatchOperating(false);
+    }
+  }, [threads, selectedIds, exitSelectionMode]);
 
   const handleOpenRename = useCallback((thread: ThreadSummary) => {
     setRenameTitle(thread.title || "");
@@ -122,65 +228,15 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
     [aiRenameThreadFn],
   );
 
-  const handleMenuClick = useCallback(
-    (thread: ThreadSummary) => async (menuEvent: React.MouseEvent) => {
-      menuEvent.preventDefault();
-      menuEvent.stopPropagation();
-
-      try {
-        const menu = await Menu.new({
-          items: [
-            {
-              id: "rename",
-              text: "重命名",
-              action: () => {
-                handleOpenRename(thread);
-              },
-            },
-            {
-              id: "ai-rename",
-              text: "AI 重命名",
-              action: () => {
-                handleAiRename(thread);
-              },
-            },
-            {
-              id: "export-markdown",
-              text: "导出为 Markdown",
-              action: () => {
-                handleExportThread(thread);
-              },
-            },
-            {
-              id: "export-html",
-              text: "导出为 HTML",
-              action: () => {
-                handleExportHtml(thread);
-              },
-            },
-            {
-              id: "export-image",
-              text: "导出为图片",
-              action: () => {
-                handleExportImage(thread);
-              },
-            },
-            {
-              id: "delete",
-              text: "删除",
-              action: () => {
-                handleNativeDelete(thread);
-              },
-            },
-          ],
-        });
-
-        await menu.popup(new LogicalPosition(menuEvent.clientX, menuEvent.clientY));
-      } catch (error) {
-        console.error("显示菜单失败:", error);
+  const handleCardClick = useCallback(
+    (thread: ThreadSummary) => {
+      if (selectionMode) {
+        toggleSelect(thread.id);
+      } else {
+        onSelectThread(thread);
       }
     },
-    [handleNativeDelete, handleOpenRename, handleExportThread, handleExportHtml, handleExportImage, handleAiRename],
+    [selectionMode, toggleSelect, onSelectThread],
   );
 
   if (status === "pending") {
@@ -249,6 +305,29 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
           </Button>
           <h2 className="font-medium text-neutral-900 text-sm dark:text-neutral-100">历史对话</h2>
           <span className="text-neutral-500 text-xs dark:text-neutral-500">({threads.length})</span>
+          <div className="ml-auto flex items-center gap-1 pr-1">
+            {selectionMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={handleSelectAll}
+              >
+                {allSelected ? "取消全选" : "全选"}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              title="多选管理"
+              className={`size-7 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-700 ${
+                selectionMode ? "bg-neutral-200 dark:bg-neutral-700" : ""
+              }`}
+              onClick={() => (selectionMode ? exitSelectionMode() : setSelectionMode(true))}
+            >
+              <ListChecks className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -270,44 +349,112 @@ export function ChatThreads({ bookId, onBack, onSelectThread }: ChatThreadsProps
         ) : (
           <div className="space-y-2">
             {sortedThreads.map((thread) => (
-              <button
-                key={thread.id}
-                onClick={() => onSelectThread(thread)}
-                onContextMenu={handleMenuClick(thread)}
-                className="group w-full cursor-pointer rounded-lg border p-2 text-left"
-              >
-                <div className="mb-1 flex items-start justify-between gap-2">
-                  <h3 className="line-clamp-1 flex-1 font-medium text-neutral-900 text-sm dark:text-neutral-100">
-                    {thread.title || "未命名对话"}
-                  </h3>
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    title={thread.starred ? "取消星标" : "星标"}
-                    className={`flex-shrink-0 cursor-pointer opacity-40 transition-opacity hover:opacity-100 group-hover:opacity-70 ${
-                      thread.starred ? "opacity-100" : ""
-                    }`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void toggleStarFn(thread);
-                    }}
+              <ContextMenu key={thread.id}>
+                <ContextMenuTrigger asChild>
+                  <button
+                    onClick={() => handleCardClick(thread)}
+                    className="group w-full cursor-pointer rounded-lg border p-2 text-left"
                   >
-                    <Star
-                      className={`size-3.5 ${thread.starred ? "fill-amber-400 text-amber-400" : "text-neutral-400"}`}
-                    />
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-neutral-600 text-xs dark:text-neutral-400">{thread.message_count} 条消息</span>
-                  <span className="flex-shrink-0 text-neutral-500 text-xs dark:text-neutral-500">
-                    {dayjs(thread.updated_at).format("YYYY-MM-DD HH:mm:ss")}
-                  </span>
-                </div>
-              </button>
+                    <div className="mb-1 flex items-start justify-between gap-2">
+                      {selectionMode && (
+                        <span
+                          className={`mt-0.5 flex size-4 flex-shrink-0 items-center justify-center rounded border transition-colors ${
+                            selectedIds.has(thread.id)
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-neutral-400 dark:border-neutral-500"
+                          }`}
+                        >
+                          {selectedIds.has(thread.id) && <Check size={12} />}
+                        </span>
+                      )}
+                      <h3 className="line-clamp-1 flex-1 font-medium text-neutral-900 text-sm dark:text-neutral-100">
+                        {thread.title || "未命名对话"}
+                      </h3>
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        title={thread.starred ? "取消星标" : "星标"}
+                        className={`flex-shrink-0 cursor-pointer opacity-40 transition-opacity hover:opacity-100 group-hover:opacity-70 ${
+                          thread.starred ? "opacity-100" : ""
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void toggleStarFn(thread);
+                        }}
+                      >
+                        <Star
+                          className={`size-3.5 ${thread.starred ? "fill-amber-400 text-amber-400" : "text-neutral-400"}`}
+                        />
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-neutral-600 text-xs dark:text-neutral-400">
+                        {thread.message_count} 条消息
+                      </span>
+                      <span className="flex-shrink-0 text-neutral-500 text-xs dark:text-neutral-500">
+                        {dayjs(thread.updated_at).format("YYYY-MM-DD HH:mm:ss")}
+                      </span>
+                    </div>
+                  </button>
+                </ContextMenuTrigger>
+                {!selectionMode && (
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => handleOpenRename(thread)}>重命名</ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleAiRename(thread)}>AI 重命名</ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => handleExportThread(thread)}>导出为 Markdown</ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleExportHtml(thread)}>导出为 HTML</ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleExportImage(thread)}>导出为图片</ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem variant="destructive" onClick={() => handleNativeDelete(thread)}>
+                      删除
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                )}
+              </ContextMenu>
             ))}
           </div>
         )}
       </div>
+
+      {selectionMode && (
+        <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-2 border-t px-3 py-2 dark:border-neutral-700">
+          <span className="text-nowrap text-neutral-600 text-xs dark:text-neutral-400">已选 {selectedIds.size} 个</span>
+          <div className="flex flex-wrap items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={selectedIds.size === 0 || isBatchOperating}
+              onClick={handleBatchExport}
+            >
+              <Download className="h-3.5 w-3.5" />
+              导出
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={selectedIds.size === 0 || isBatchOperating}
+              onClick={handleBatchStar}
+            >
+              <Star className="h-3.5 w-3.5" />
+              星标
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={selectedIds.size === 0 || isBatchOperating}
+              onClick={handleBatchDelete}
+              className="text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              删除
+            </Button>
+            <Button variant="ghost" size="sm" onClick={exitSelectionMode} disabled={isBatchOperating}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Dialog
         open={!!renameTarget}
